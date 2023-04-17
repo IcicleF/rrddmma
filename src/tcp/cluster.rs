@@ -35,12 +35,17 @@ impl Cluster {
         file.read_to_string(&mut toml_str)?;
 
         let toml: toml::Value = toml::from_str(&toml_str)?;
-        let peers = toml["peers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|x| x.as_str().unwrap().parse().unwrap())
-            .collect::<Vec<Ipv4Addr>>();
+        let peers = match toml["rrddmma"].as_table() {
+            Some(t) => t,
+            None => return Err(anyhow::anyhow!("rrddmma configuration not found")),
+        };
+        let peers = match peers["peers"].as_array() {
+            Some(a) => a,
+            None => return Err(anyhow::anyhow!("bad rrddmma configuration")),
+        }
+        .iter()
+        .map(|x| x.as_str().unwrap().parse().unwrap())
+        .collect();
         Ok(Self::new(peers))
     }
 

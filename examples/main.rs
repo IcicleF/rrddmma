@@ -2,9 +2,7 @@ use anyhow;
 use std::collections::HashMap;
 
 fn main() -> anyhow::Result<()> {
-    let cluster = rrddmma::tcp::cluster::Cluster::load_toml(
-        "/home/gaoj/workspace/rust/rrddmma/examples/lab.toml",
-    )?;
+    let cluster = rrddmma::tcp::cluster::Cluster::load_toml("examples/lab.toml")?;
     println!("This is node {}", cluster.id());
 
     // Basic context & pd
