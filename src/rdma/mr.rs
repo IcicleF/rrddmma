@@ -142,7 +142,7 @@ impl<'a> MrSlice<'a> {
 /// This structure contains remote memory region information and does not hold any resources locally.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct RemoteMr {
-    addr: u64,
-    len: usize,
-    rkey: u32,
+    pub addr: u64,
+    pub len: usize,
+    pub rkey: u32,
 }
