@@ -1,4 +1,5 @@
 use local_ip_address::list_afinet_netifas;
+use log;
 use std::io::prelude::*;
 use std::net::*;
 use std::sync::Arc;
@@ -171,8 +172,10 @@ impl<'a, 'b> std::iter::Iterator for ConnectionIter<'a, 'b> {
                 qp
             })
             .collect::<Vec<_>>();
-        let ret = Connecter::new(self.cluster, peer_id).connect_all(&qps);
-        if let Err(_) = ret {
+        let ret = Connecter::new(self.cluster, peer_id).connect_many(&qps);
+        if let Err(e) = ret {
+            log::error!("rrddmma: failed to connect to peer {}: {:?}", peer_id, e);
+            Barrier::wait(self.cluster);
             return None;
         }
         let ret = qps.into_iter().zip(ret.unwrap()).collect();

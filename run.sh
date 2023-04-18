@@ -1,10 +1,13 @@
 #!/bin/bash
-build_type=${1:-"debug"}
+BUILD_TYPE="debug"
+params=${@:1}
 
-if [ $build_type = "debug" ]; then
+if [ $BUILD_TYPE = "debug" ]; then
     cargo build
 else
-    build_type="release"
+    BUILD_TYPE="release"
     cargo build --release
 fi
-pdsh -w ssh:ec[1-3] "RUST_LOG=info /home/gaoj/workspace/rust/rrddmma/target/$build_type/rrddmma"
+
+pdsh -w ssh:ec[1-3] "/home/gaoj/workspace/rust/rrddmma/target/$BUILD_TYPE/rrddmma $params"
+pdsh -w ssh:ec[1-3] "killall rrddmma >> /dev/null 2>&1"

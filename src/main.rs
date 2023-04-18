@@ -13,10 +13,9 @@ fn main() -> anyhow::Result<()> {
 
     rrddmma::tcp::barrier::Barrier::wait(&cluster);
     let mut conns = HashMap::new();
-    for (i, links) in cluster.connect_all(&pd, 1) {
+    for (i, links) in cluster.connect_all(&pd, 64) {
         conns.insert(i, links);
     }
-    println!("Established");
 
     Ok(())
 }

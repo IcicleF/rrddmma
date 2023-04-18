@@ -3,6 +3,27 @@ use crate::rdma::qp::*;
 use std::io::prelude::*;
 use std::net::*;
 
+fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> anyhow::Result<()> {
+    stream.write(&buf.len().to_le_bytes())?;
+
+    let mut written = 0;
+    while written < buf.len() {
+        let len = stream.write(&buf[written..])?;
+        written += len;
+    }
+    Ok(())
+}
+
+fn stream_read(stream: &mut &TcpStream) -> anyhow::Result<Vec<u8>> {
+    let mut buf = [0; std::mem::size_of::<usize>()];
+    stream.read_exact(&mut buf)?;
+    let len = usize::from_le_bytes(buf);
+
+    let mut buf = vec![0; len];
+    stream.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
 pub struct Connecter<'a> {
     cluster: &'a Cluster,
     with: usize,
@@ -60,27 +81,25 @@ impl<'a> Connecter<'a> {
         let mut stream = self.stream.as_ref().unwrap();
         let ep = if self.cluster.id() < self.with {
             // First receive
-            let mut buf = [0; 1024];
-            let len = stream.read(&mut buf)?;
-            let peer = serde_json::from_slice::<QpEndpoint>(&buf[..len])?;
+            let buf = stream_read(&mut stream)?;
+            let peer = serde_json::from_slice::<QpEndpoint>(buf.as_slice())?;
 
             // Then send
-            stream.write(ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())?;
             peer
         } else {
             // First send
-            stream.write(ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())?;
 
             // Then receive
-            let mut buf = [0; 1024];
-            let len = stream.read(&mut buf)?;
-            serde_json::from_slice::<QpEndpoint>(&buf[..len])?
+            let buf = stream_read(&mut stream)?;
+            serde_json::from_slice::<QpEndpoint>(buf.as_slice())?
         };
         qp.connect(&ep)?;
         QpPeer::new(qp.pd(), ep)
     }
 
-    pub fn connect_all(&self, qps: &Vec<Qp>) -> anyhow::Result<Vec<QpPeer>> {
+    pub fn connect_many(&self, qps: &Vec<Qp>) -> anyhow::Result<Vec<QpPeer>> {
         let ep = qps
             .iter()
             .map(|qp| QpEndpoint::from(qp))
@@ -90,21 +109,19 @@ impl<'a> Connecter<'a> {
         let mut stream = self.stream.as_ref().unwrap();
         let eps = if self.cluster.id() < self.with {
             // First receive
-            let mut buf = [0; 1024];
-            let len = stream.read(&mut buf)?;
-            let peer = serde_json::from_slice::<Vec<QpEndpoint>>(&buf[..len])?;
+            let buf = stream_read(&mut stream)?;
+            let peer = serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?;
 
             // Then send
-            stream.write(ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())?;
             peer
         } else {
             // First send
-            stream.write(ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())?;
 
             // Then receive
-            let mut buf = [0; 1024];
-            let len = stream.read(&mut buf)?;
-            serde_json::from_slice::<Vec<QpEndpoint>>(&buf[..len])?
+            let buf = stream_read(&mut stream)?;
+            serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?
         };
         let peers = eps
             .into_iter()
