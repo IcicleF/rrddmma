@@ -2,7 +2,9 @@ use anyhow;
 use std::collections::HashMap;
 
 fn main() -> anyhow::Result<()> {
-    let cluster = rrddmma::tcp::cluster::Cluster::load_toml("examples/lab.toml")?;
+    let cluster = rrddmma::tcp::cluster::Cluster::load_toml(
+        "/home/gaoj/workspace/rust/rrddmma/examples/lab.toml",
+    )?;
     println!("This is node {}", cluster.id());
 
     // Basic context & pd
@@ -11,8 +13,8 @@ fn main() -> anyhow::Result<()> {
 
     rrddmma::tcp::barrier::Barrier::wait(&cluster);
     let mut conns = HashMap::new();
-    for (i, qp, peer) in cluster.connect_all(&pd) {
-        conns.insert(i, (qp, peer));
+    for (i, links) in cluster.connect_all(&pd, 1) {
+        conns.insert(i, links);
     }
     println!("Established");
 

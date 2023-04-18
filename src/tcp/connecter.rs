@@ -79,4 +79,41 @@ impl<'a> Connecter<'a> {
         qp.connect(&ep)?;
         QpPeer::new(qp.pd(), ep)
     }
+
+    pub fn connect_all(&self, qps: &Vec<Qp>) -> anyhow::Result<Vec<QpPeer>> {
+        let ep = qps
+            .iter()
+            .map(|qp| QpEndpoint::from(qp))
+            .collect::<Vec<_>>();
+        let ep = serde_json::to_string(&ep)?;
+
+        let mut stream = self.stream.as_ref().unwrap();
+        let eps = if self.cluster.id() < self.with {
+            // First receive
+            let mut buf = [0; 1024];
+            let len = stream.read(&mut buf)?;
+            let peer = serde_json::from_slice::<Vec<QpEndpoint>>(&buf[..len])?;
+
+            // Then send
+            stream.write(ep.as_bytes())?;
+            peer
+        } else {
+            // First send
+            stream.write(ep.as_bytes())?;
+
+            // Then receive
+            let mut buf = [0; 1024];
+            let len = stream.read(&mut buf)?;
+            serde_json::from_slice::<Vec<QpEndpoint>>(&buf[..len])?
+        };
+        let peers = eps
+            .into_iter()
+            .zip(qps)
+            .map(|(ep, qp)| {
+                qp.connect(&ep).unwrap();
+                QpPeer::new(qp.pd(), ep).unwrap()
+            })
+            .collect::<Vec<_>>();
+        Ok(peers)
+    }
 }

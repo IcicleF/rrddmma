@@ -112,7 +112,7 @@ impl Cluster {
     }
 
     #[inline]
-    pub fn connect_all<'a, 'b>(&'a self, pd: &'b Pd<'b>) -> ConnectionIter<'a, 'b> {
+    pub fn connect_all<'a, 'b>(&'a self, pd: &'b Pd<'b>, links: usize) -> ConnectionIter<'a, 'b> {
         fn pow2_roundup(x: usize) -> usize {
             let mut n = 1;
             while n < x {
@@ -125,6 +125,7 @@ impl Cluster {
             pd,
             n: pow2_roundup(self.size()),
             i: 1,
+            links,
         }
     }
 }
@@ -134,10 +135,11 @@ pub struct ConnectionIter<'a, 'b> {
     pd: &'b Pd<'b>,
     n: usize,
     i: usize,
+    links: usize,
 }
 
 impl<'a, 'b> std::iter::Iterator for ConnectionIter<'a, 'b> {
-    type Item = (usize, Qp<'b>, QpPeer);
+    type Item = (usize, Vec<(Qp<'b>, QpPeer)>);
 
     fn next(&mut self) -> Option<Self::Item> {
         fn progress_iter<'a, 'b>(this: &mut ConnectionIter<'a, 'b>) -> Option<usize> {
@@ -157,16 +159,25 @@ impl<'a, 'b> std::iter::Iterator for ConnectionIter<'a, 'b> {
             peer_id = progress_iter(self)?;
         }
 
-        let send_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
-        let recv_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
-        let qp = Qp::new(
-            self.pd,
-            QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::RC, true),
-        )
-        .unwrap();
-        let peer = Connecter::new(self.cluster, peer_id).connect(&qp).unwrap();
+        let qps = (0..self.links)
+            .map(|_| {
+                let send_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
+                let recv_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
+                let qp = Qp::new(
+                    self.pd,
+                    QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::RC, true),
+                )
+                .unwrap();
+                qp
+            })
+            .collect::<Vec<_>>();
+        let ret = Connecter::new(self.cluster, peer_id).connect_all(&qps);
+        if let Err(_) = ret {
+            return None;
+        }
+        let ret = qps.into_iter().zip(ret.unwrap()).collect();
 
         Barrier::wait(self.cluster);
-        Some((peer_id, qp, peer))
+        Some((peer_id, ret))
     }
 }
