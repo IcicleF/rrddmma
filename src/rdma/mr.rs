@@ -45,8 +45,12 @@ impl<'a> Mr<'a> {
                     .0 as i32,
             )
         })
-        .ok_or_else(|| anyhow::anyhow!("ibv_reg_mr failed"))?;
+        .ok_or_else(|| anyhow::anyhow!("ibv_reg_mr failed: {}", std::io::Error::last_os_error()))?;
         Ok(Self { pd, mr, addr, len })
+    }
+
+    pub fn from_slice(pd: &'a Pd, buf: &[u8]) -> anyhow::Result<Self> {
+        Self::new(pd, buf.as_ptr() as *mut c_void, buf.len())
     }
 
     #[inline]
@@ -145,4 +149,72 @@ pub struct RemoteMr {
     pub addr: u64,
     pub len: usize,
     pub rkey: u32,
+}
+
+impl RemoteMr {
+    pub fn new(addr: u64, len: usize, rkey: u32) -> Self {
+        Self { addr, len, rkey }
+    }
+
+    pub fn as_slice(&self) -> RemoteMrSlice {
+        RemoteMrSlice::new(self, 0..self.len)
+    }
+
+    pub fn get(&self, r: Range<usize>) -> Option<RemoteMrSlice> {
+        if r.start <= r.end && r.end <= self.len {
+            Some(RemoteMrSlice::new(self, r))
+        } else {
+            None
+        }
+    }
+
+    pub unsafe fn get_unchecked(&self, r: Range<usize>) -> RemoteMrSlice {
+        RemoteMrSlice::new(self, r)
+    }
+}
+
+impl<'a> From<&'a Mr<'a>> for RemoteMr {
+    fn from(mr: &'a Mr) -> Self {
+        Self {
+            addr: mr.addr() as u64,
+            len: mr.len(),
+            rkey: mr.rkey(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteMrSlice<'a> {
+    mr: &'a RemoteMr,
+    range: Range<usize>,
+}
+
+impl<'a> RemoteMrSlice<'a> {
+    pub fn new(mr: &'a RemoteMr, range: Range<usize>) -> Self {
+        Self { mr, range }
+    }
+
+    #[inline]
+    pub fn mr(&self) -> &RemoteMr {
+        &self.mr
+    }
+
+    #[inline]
+    pub fn offset(&self) -> usize {
+        self.range.start
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.range.end - self.range.start
+    }
+}
+
+impl<'a> From<&RemoteMrSlice<'a>> for rdma_t {
+    fn from(value: &RemoteMrSlice<'a>) -> Self {
+        Self {
+            remote_addr: value.mr.addr + value.range.start as u64,
+            rkey: value.mr.rkey,
+        }
+    }
 }

@@ -3,7 +3,7 @@ use std::{fmt, io, mem, ptr};
 
 use super::context::Context;
 
-use anyhow;
+use anyhow::Result;
 use rdma_sys::*;
 
 /// Work completion entry.
@@ -36,7 +36,7 @@ impl Wc {
     /// - If the status is `IBV_WC_SUCCESS`, return the number of bytes processed or transferred.
     /// - Otherwise, return an error.
     #[inline]
-    pub fn result(&self) -> anyhow::Result<usize> {
+    pub fn result(&self) -> Result<usize> {
         if self.status() == ibv_wc_status::IBV_WC_SUCCESS {
             Ok(self.0.byte_len as usize)
         } else {
@@ -102,7 +102,7 @@ pub struct Cq<'a> {
 unsafe impl<'a> Sync for Cq<'a> {}
 
 impl<'a> Cq<'a> {
-    pub fn new(ctx: &'a Context, size: Option<i32>) -> anyhow::Result<Self> {
+    pub fn new(ctx: &'a Context, size: Option<i32>) -> Result<Self> {
         const DEFAULT_CQ_SIZE: i32 = 128;
         let cq = NonNull::new(unsafe {
             ibv_create_cq(
@@ -131,7 +131,7 @@ impl<'a> Cq<'a> {
     /// **NOTE:** The validity of work completions beyond the number of polled work completions is not guaranteed.
     /// For valid completions, it is not guaranteed that they are all success.
     /// It is the caller's responsibility to check the status of each work completion.
-    pub fn poll(&self, wc: &mut [Wc]) -> anyhow::Result<i32> {
+    pub fn poll(&self, wc: &mut [Wc]) -> Result<i32> {
         let num = unsafe { ibv_poll_cq(self.cq.as_ptr(), wc.len() as i32, wc.as_mut_ptr().cast()) };
 
         if num < 0 {
@@ -148,7 +148,7 @@ impl<'a> Cq<'a> {
     /// **NOTE:** The validity of work completions beyond the number of polled work completions is not guaranteed.
     /// For valid completions, it is not guaranteed that they are all success.
     /// It is the caller's responsibility to check the status of each work completion.
-    pub fn poll_blocking(&self, wc: &mut [Wc]) -> anyhow::Result<()> {
+    pub fn poll_blocking(&self, wc: &mut [Wc]) -> Result<()> {
         let num = wc.len();
         let mut polled = 0;
         while polled < num {
@@ -167,7 +167,7 @@ impl<'a> Cq<'a> {
     /// It is possible that the number of polled work completions is less than `num` or even zero.
     ///
     /// This method checks the status of each polled work completion and returns an error if any of them is not success.
-    pub fn poll_nocqe(&self, num: usize) -> anyhow::Result<i32> {
+    pub fn poll_nocqe(&self, num: usize) -> Result<i32> {
         let mut wc = vec![Wc::default(); num];
         let ret = self.poll(&mut wc)?;
 
@@ -180,7 +180,7 @@ impl<'a> Cq<'a> {
     /// Blocking poll a specified number of work completions but consume them.
     ///
     /// This method checks the status of each polled work completion and returns an error if any of them is not success.
-    pub fn poll_nocqe_blocking(&self, num: usize) -> anyhow::Result<()> {
+    pub fn poll_nocqe_blocking(&self, num: usize) -> Result<()> {
         let mut wc = vec![Wc::default(); num];
         self.poll_blocking(&mut wc)?;
         for i in 0..num {

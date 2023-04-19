@@ -7,7 +7,7 @@ use super::gid::Gid;
 use super::mr::*;
 use super::pd::Pd;
 
-use anyhow;
+use anyhow::Result;
 use rdma_sys::*;
 
 /// Queue pair type
@@ -212,7 +212,7 @@ pub struct QpPeer {
 unsafe impl Sync for QpPeer {}
 
 impl QpPeer {
-    pub fn new(pd: &Pd, ep: QpEndpoint) -> anyhow::Result<Self> {
+    pub fn new(pd: &Pd, ep: QpEndpoint) -> Result<Self> {
         let mut ah_attr = ibv_ah_attr {
             grh: ibv_global_route {
                 dgid: ibv_gid::from(ep.gid),
@@ -232,13 +232,14 @@ impl QpPeer {
             .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
         Ok(QpPeer { ah, ep })
     }
+}
 
-    #[inline]
-    pub fn get(&self) -> ud_t {
+impl From<&QpPeer> for ud_t {
+    fn from(peer: &QpPeer) -> Self {
         ud_t {
-            ah: self.ah.as_ptr(),
-            remote_qpn: self.ep.qpn,
-            remote_qkey: self.ep.qkey,
+            ah: peer.ah.as_ptr(),
+            remote_qpn: peer.ep.qpn,
+            remote_qkey: peer.ep.qkey,
         }
     }
 }
@@ -273,7 +274,7 @@ impl<'a> From<&Qp<'a>> for QpEndpoint {
 }
 
 impl<'a> Qp<'a> {
-    pub fn new(pd: &'a Pd, attr: QpInitAttr<'a>) -> anyhow::Result<Self> {
+    pub fn new(pd: &'a Pd, attr: QpInitAttr<'a>) -> Result<Self> {
         let qp = NonNull::new(unsafe {
             ibv_create_qp(pd.as_ptr(), &mut ibv_qp_init_attr::from(attr.clone()))
         })
@@ -343,7 +344,7 @@ impl<'a> Qp<'a> {
         &self.init_attr.recv_cq
     }
 
-    fn modify_reset_to_init(&self, ep: &QpEndpoint) -> anyhow::Result<()> {
+    fn modify_reset_to_init(&self, ep: &QpEndpoint) -> Result<()> {
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE
             | ibv_qp_attr_mask::IBV_QP_PKEY_INDEX
@@ -371,7 +372,7 @@ impl<'a> Qp<'a> {
         }
     }
 
-    fn modify_init_to_rtr(&self, ep: &QpEndpoint) -> anyhow::Result<()> {
+    fn modify_init_to_rtr(&self, ep: &QpEndpoint) -> Result<()> {
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE;
         attr.qp_state = ibv_qp_state::IBV_QPS_RTR;
@@ -413,7 +414,7 @@ impl<'a> Qp<'a> {
         }
     }
 
-    fn modify_rtr_to_rts(&self, ep: &QpEndpoint) -> anyhow::Result<()> {
+    fn modify_rtr_to_rts(&self, ep: &QpEndpoint) -> Result<()> {
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE | ibv_qp_attr_mask::IBV_QP_SQ_PSN;
         attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
@@ -439,7 +440,7 @@ impl<'a> Qp<'a> {
         }
     }
 
-    pub fn connect(&self, ep: &QpEndpoint) -> anyhow::Result<()> {
+    pub fn connect(&self, ep: &QpEndpoint) -> Result<()> {
         if self.state() == QpState::Reset {
             self.modify_reset_to_init(ep)?;
         }
@@ -452,7 +453,7 @@ impl<'a> Qp<'a> {
         Ok(())
     }
 
-    pub fn send(&self, slices: &[MrSlice], signal: bool) -> anyhow::Result<()> {
+    fn build_sgl(&self, slices: &[MrSlice]) -> Result<(Vec<ibv_sge>, usize)> {
         if slices.len() > self.init_attr.cap.max_send_sge as usize {
             return Err(anyhow::anyhow!(
                 "sge number {} > max allowed {}",
@@ -461,26 +462,30 @@ impl<'a> Qp<'a> {
             ));
         }
 
-        let mut sge = Vec::with_capacity(slices.len());
-        let mut total_len = 0;
-        for slice in slices {
-            total_len += slice.len();
-            sge.push(ibv_sge {
+        let sgl = slices
+            .iter()
+            .map(|slice| ibv_sge {
                 addr: slice.mr().addr() as u64 + slice.offset() as u64,
                 length: slice.len() as u32,
                 lkey: slice.mr().lkey(),
-            });
-        }
+            })
+            .collect::<Vec<_>>();
+        let total_len = slices.iter().map(|slice| slice.len()).sum();
+
         if total_len > (2usize << 30) {
             return Err(anyhow::anyhow!("payload too large"));
         }
+        Ok((sgl, total_len))
+    }
 
+    pub fn send(&self, local: &[MrSlice], wr_id: u64, signal: bool) -> Result<()> {
+        let (mut sgl, _) = self.build_sgl(local)?;
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
-            wr_id: 0,
+            wr_id,
             next: ptr::null_mut(),
-            sg_list: sge.as_mut_ptr(),
-            num_sge: slices.len() as i32,
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_SEND,
             send_flags: if signal {
                 ibv_send_flags::IBV_SEND_SIGNALED.0
@@ -500,35 +505,20 @@ impl<'a> Qp<'a> {
         }
     }
 
-    pub fn send_to(&self, peer: &QpPeer, slices: &[MrSlice], signal: bool) -> anyhow::Result<()> {
-        if slices.len() > self.init_attr.cap.max_send_sge as usize {
-            return Err(anyhow::anyhow!(
-                "sge number {} > max allowed {}",
-                slices.len(),
-                self.init_attr.cap.max_send_sge
-            ));
-        }
-
-        let mut sge = Vec::with_capacity(slices.len());
-        let mut total_len = 0;
-        for slice in slices {
-            total_len += slice.len();
-            sge.push(ibv_sge {
-                addr: slice.mr().addr() as u64 + slice.offset() as u64,
-                length: slice.len() as u32,
-                lkey: slice.mr().lkey(),
-            });
-        }
-        if total_len > (2usize << 30) {
-            return Err(anyhow::anyhow!("payload too large"));
-        }
-
+    pub fn send_to(
+        &self,
+        peer: &QpPeer,
+        local: &[MrSlice],
+        wr_id: u64,
+        signal: bool,
+    ) -> Result<()> {
+        let (mut sgl, _) = self.build_sgl(local)?;
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
-            wr_id: 0,
+            wr_id,
             next: ptr::null_mut(),
-            sg_list: sge.as_mut_ptr(),
-            num_sge: slices.len() as i32,
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_SEND,
             send_flags: if signal {
                 ibv_send_flags::IBV_SEND_SIGNALED.0
@@ -537,7 +527,7 @@ impl<'a> Qp<'a> {
             },
             ..wr
         };
-        wr.wr.ud = peer.get();
+        wr.wr.ud = ud_t::from(peer);
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.qp.as_ptr(), &mut wr, &mut bad_wr)
@@ -549,38 +539,117 @@ impl<'a> Qp<'a> {
         }
     }
 
-    pub fn recv(&self, slices: &[MrSlice]) -> anyhow::Result<()> {
-        if slices.len() > self.init_attr.cap.max_recv_sge as usize {
-            return Err(anyhow::anyhow!(
-                "sge number {} > max allowed {}",
-                slices.len(),
-                self.init_attr.cap.max_recv_sge
-            ));
-        }
-
-        let mut sge = Vec::with_capacity(slices.len());
-        let mut total_len = 0;
-        for slice in slices {
-            total_len += slice.len();
-            sge.push(ibv_sge {
-                addr: slice.mr().addr() as u64 + slice.offset() as u64,
-                length: slice.len() as u32,
-                lkey: slice.mr().lkey(),
-            });
-        }
-        if total_len > (2usize << 30) {
-            return Err(anyhow::anyhow!("payload too large"));
-        }
-
+    /// Post a RDMA recv using the given buffer array.
+    ///
+    /// **NOTE:** This method has no mutable borrows it its parameters, but can
+    /// cause the content of the buffers to be modified!
+    pub fn recv(&self, local: &[MrSlice], wr_id: u64) -> Result<()> {
+        let (mut sgl, _) = self.build_sgl(local)?;
         let mut wr = ibv_recv_wr {
-            wr_id: 0,
+            wr_id,
             next: ptr::null_mut(),
-            sg_list: sge.as_mut_ptr(),
-            num_sge: slices.len() as i32,
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: local.len() as i32,
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_recv(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(io::Error::last_os_error()))
+        }
+    }
+
+    pub fn read(
+        &self,
+        local: &[MrSlice],
+        remote: &RemoteMrSlice,
+        wr_id: u64,
+        signal: bool,
+    ) -> Result<()> {
+        let (mut sgl, len) = self.build_sgl(local)?;
+        if len > remote.len() {
+            log::warn!(
+                "rrddmma: RDMA read sgl length {} > provided length {}",
+                len,
+                remote.len()
+            );
+        }
+
+        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
+        wr = ibv_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: local.len() as i32,
+            opcode: ibv_wr_opcode::IBV_WR_RDMA_READ,
+            send_flags: if signal {
+                ibv_send_flags::IBV_SEND_SIGNALED.0
+            } else {
+                0
+            },
+            wr: wr_t {
+                rdma: rdma_t::from(remote),
+            },
+            ..wr
+        };
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(io::Error::last_os_error()))
+        }
+    }
+
+    pub fn write(
+        &self,
+        local: &[MrSlice],
+        remote: &RemoteMrSlice,
+        wr_id: u64,
+        imm: Option<u32>,
+        signal: bool,
+    ) -> Result<()> {
+        let (mut sgl, len) = self.build_sgl(local)?;
+        if len > remote.len() {
+            log::warn!(
+                "rrddmma: RDMA write sgl length {} > provided length {}",
+                len,
+                remote.len()
+            );
+        }
+
+        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
+        wr = ibv_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: local.len() as i32,
+            opcode: if imm.is_none() {
+                ibv_wr_opcode::IBV_WR_RDMA_WRITE
+            } else {
+                ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM
+            },
+            send_flags: if signal {
+                ibv_send_flags::IBV_SEND_SIGNALED.0
+            } else {
+                0
+            },
+            imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
+                imm_data: imm.unwrap_or(0),
+            },
+            wr: wr_t {
+                rdma: rdma_t::from(remote),
+            },
+            ..wr
+        };
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
         if ret == 0 {
             Ok(())

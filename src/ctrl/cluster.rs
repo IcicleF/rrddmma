@@ -1,5 +1,7 @@
+use anyhow::Result;
 use local_ip_address::list_afinet_netifas;
 use log;
+
 use std::io::prelude::*;
 use std::net::*;
 use std::sync::Arc;
@@ -30,7 +32,7 @@ impl Cluster {
         Self::new_withid(peers, id)
     }
 
-    pub fn load_toml(config_file: &str) -> anyhow::Result<Self> {
+    pub fn load_toml(config_file: &str) -> Result<Self> {
         let mut file = std::fs::File::open(config_file)?;
         let mut toml_str = String::new();
         file.read_to_string(&mut toml_str)?;
@@ -50,7 +52,7 @@ impl Cluster {
         Ok(Self::new(peers))
     }
 
-    pub fn load_cloudlab_xml(config_file: &str) -> anyhow::Result<Self> {
+    pub fn load_cloudlab_xml(config_file: &str) -> Result<Self> {
         use quick_xml::events::Event;
         use quick_xml::reader::Reader;
 
@@ -98,7 +100,7 @@ impl Cluster {
     }
 
     #[inline]
-    pub fn id(&self) -> usize {
+    pub fn myself(&self) -> usize {
         self.id
     }
 
@@ -113,7 +115,12 @@ impl Cluster {
     }
 
     #[inline]
-    pub fn connect_all<'a, 'b>(&'a self, pd: &'b Pd<'b>, links: usize) -> ConnectionIter<'a, 'b> {
+    pub fn connect_all<'a, 'b>(
+        &'a self,
+        pd: &'b Pd<'b>,
+        qp_type: QpType,
+        num_links: usize,
+    ) -> ConnectionIter<'a, 'b> {
         fn pow2_roundup(x: usize) -> usize {
             let mut n = 1;
             while n < x {
@@ -126,7 +133,8 @@ impl Cluster {
             pd,
             n: pow2_roundup(self.size()),
             i: 1,
-            links,
+            qp_type,
+            num_links,
         }
     }
 }
@@ -136,7 +144,8 @@ pub struct ConnectionIter<'a, 'b> {
     pd: &'b Pd<'b>,
     n: usize,
     i: usize,
-    links: usize,
+    qp_type: QpType,
+    num_links: usize,
 }
 
 impl<'a, 'b> std::iter::Iterator for ConnectionIter<'a, 'b> {
@@ -148,7 +157,7 @@ impl<'a, 'b> std::iter::Iterator for ConnectionIter<'a, 'b> {
                 return None;
             }
 
-            let id = this.cluster.id();
+            let id = this.cluster.myself();
             let peer_id = this.i ^ id;
             this.i += 1;
             Some(peer_id)
@@ -160,13 +169,13 @@ impl<'a, 'b> std::iter::Iterator for ConnectionIter<'a, 'b> {
             peer_id = progress_iter(self)?;
         }
 
-        let qps = (0..self.links)
+        let qps = (0..self.num_links)
             .map(|_| {
                 let send_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
                 let recv_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
                 let qp = Qp::new(
                     self.pd,
-                    QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::RC, true),
+                    QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), self.qp_type, true),
                 )
                 .unwrap();
                 qp

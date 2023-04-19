@@ -1,9 +1,10 @@
 use super::cluster::Cluster;
-use crate::rdma::qp::*;
+use crate::rdma::{mr::*, qp::*};
+use anyhow::Result;
 use std::io::prelude::*;
 use std::net::*;
 
-fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> anyhow::Result<()> {
+fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> Result<()> {
     stream.write(&buf.len().to_le_bytes())?;
 
     let mut written = 0;
@@ -14,7 +15,7 @@ fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn stream_read(stream: &mut &TcpStream) -> anyhow::Result<Vec<u8>> {
+fn stream_read(stream: &mut &TcpStream) -> Result<Vec<u8>> {
     let mut buf = [0; std::mem::size_of::<usize>()];
     stream.read_exact(&mut buf)?;
     let len = usize::from_le_bytes(buf);
@@ -42,7 +43,7 @@ impl<'a> Connecter<'a> {
             };
         }
 
-        let id = cluster.id();
+        let id = cluster.myself();
         assert_ne!(id, with);
 
         let stream = if id < with {
@@ -74,12 +75,12 @@ impl<'a> Connecter<'a> {
         Self::new_on_port(cluster, with, PORT)
     }
 
-    pub fn connect(&self, qp: &'a Qp) -> anyhow::Result<QpPeer> {
+    pub fn connect(&self, qp: &'a Qp) -> Result<QpPeer> {
         let ep = QpEndpoint::from(qp);
         let ep = serde_json::to_string(&ep)?;
 
         let mut stream = self.stream.as_ref().unwrap();
-        let ep = if self.cluster.id() < self.with {
+        let ep = if self.cluster.myself() < self.with {
             // First receive
             let buf = stream_read(&mut stream)?;
             let peer = serde_json::from_slice::<QpEndpoint>(buf.as_slice())?;
@@ -99,7 +100,7 @@ impl<'a> Connecter<'a> {
         QpPeer::new(qp.pd(), ep)
     }
 
-    pub fn connect_many(&self, qps: &Vec<Qp>) -> anyhow::Result<Vec<QpPeer>> {
+    pub fn connect_many(&self, qps: &Vec<Qp>) -> Result<Vec<QpPeer>> {
         let ep = qps
             .iter()
             .map(|qp| QpEndpoint::from(qp))
@@ -107,7 +108,7 @@ impl<'a> Connecter<'a> {
         let ep = serde_json::to_string(&ep)?;
 
         let mut stream = self.stream.as_ref().unwrap();
-        let eps = if self.cluster.id() < self.with {
+        let eps = if self.cluster.myself() < self.with {
             // First receive
             let buf = stream_read(&mut stream)?;
             let peer = serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?;
@@ -132,5 +133,22 @@ impl<'a> Connecter<'a> {
             })
             .collect::<Vec<_>>();
         Ok(peers)
+    }
+
+    pub fn send_mr(&self, mr: &Mr) -> Result<()> {
+        let mr = RemoteMr::from(mr);
+        let mr = serde_json::to_string(&mr)?;
+
+        let mut stream = self.stream.as_ref().unwrap();
+        stream_write(&mut stream, mr.as_bytes())?;
+
+        Ok(())
+    }
+
+    pub fn recv_mr(&self) -> Result<RemoteMr> {
+        let mut stream = self.stream.as_ref().unwrap();
+        let buf = stream_read(&mut stream)?;
+        let mr = serde_json::from_slice::<RemoteMr>(buf.as_slice())?;
+        Ok(mr)
     }
 }
