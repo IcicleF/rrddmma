@@ -16,7 +16,7 @@ pub struct Mr<'a> {
     pd: &'a Pd<'a>,
     mr: NonNull<ibv_mr>,
 
-    addr: *mut c_void,
+    addr: *mut u8,
     len: usize,
 }
 
@@ -32,11 +32,11 @@ impl<'a> fmt::Debug for Mr<'a> {
 }
 
 impl<'a> Mr<'a> {
-    pub fn new(pd: &'a Pd, addr: *mut c_void, len: usize) -> anyhow::Result<Self> {
+    pub fn reg(pd: &'a Pd, addr: *mut u8, len: usize) -> anyhow::Result<Self> {
         let mr = NonNull::new(unsafe {
             ibv_reg_mr(
                 pd.as_ptr(),
-                addr,
+                addr as *mut c_void,
                 len,
                 (ibv_access_flags::IBV_ACCESS_LOCAL_WRITE
                     | ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
@@ -50,7 +50,7 @@ impl<'a> Mr<'a> {
     }
 
     pub fn from_slice(pd: &'a Pd, buf: &[u8]) -> anyhow::Result<Self> {
-        Self::new(pd, buf.as_ptr() as *mut c_void, buf.len())
+        Self::reg(pd, buf.as_ptr() as *mut u8, buf.len())
     }
 
     #[inline]
@@ -59,7 +59,7 @@ impl<'a> Mr<'a> {
     }
 
     #[inline]
-    pub fn addr(&self) -> *mut c_void {
+    pub fn addr(&self) -> *mut u8 {
         self.addr
     }
 

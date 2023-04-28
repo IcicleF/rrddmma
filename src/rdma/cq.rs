@@ -5,6 +5,134 @@ use super::context::Context;
 
 use anyhow::Result;
 use rdma_sys::*;
+use thiserror::Error;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CqeOpcode {
+    Send = 0,
+    RdmaWrite = 1,
+    RdmaRead = 2,
+    CompSwap = 3,
+    FetchAdd = 4,
+    BindMw = 5,
+    Recv = 128,
+    RecvRdmaImm = 129,
+}
+
+impl From<u32> for CqeOpcode {
+    fn from(n: u32) -> Self {
+        match n {
+            0 => CqeOpcode::Send,
+            1 => CqeOpcode::RdmaWrite,
+            2 => CqeOpcode::RdmaRead,
+            3 => CqeOpcode::CompSwap,
+            4 => CqeOpcode::FetchAdd,
+            5 => CqeOpcode::BindMw,
+            128 => CqeOpcode::Recv,
+            129 => CqeOpcode::RecvRdmaImm,
+            _ => panic!("invalid opcode: {}", n),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum CqeStatus {
+    #[error("success")]
+    Success = 0,
+
+    #[error("local length error")]
+    LocLenErr = 1,
+
+    #[error("local QP operation error")]
+    LocQpOpErr = 2,
+
+    #[error("local EE context operation error")]
+    LocEecOpErr = 3,
+
+    #[error("local protection error")]
+    LocProtErr = 4,
+
+    #[error("WR flush error")]
+    WrFlushErr = 5,
+
+    #[error("memory window bind error")]
+    MwBindErr = 6,
+
+    #[error("bad response error")]
+    BadRespErr = 7,
+
+    #[error("local access error")]
+    LocAccessErr = 8,
+
+    #[error("remote invalid request error")]
+    RemInvReqErr = 9,
+
+    #[error("remote access error")]
+    RemAccessErr = 10,
+
+    #[error("remote operation error")]
+    RemOpErr = 11,
+
+    #[error("transport retry counter exceeded")]
+    RetryExcErr = 12,
+
+    #[error("RNR retry counter exceeded")]
+    RnrRetryExcErr = 13,
+
+    #[error("local RDD violation error")]
+    LocRddViolErr = 14,
+
+    #[error("remote invalid RD request")]
+    RemInvRdReqErr = 15,
+
+    #[error("remote aborted error")]
+    RemAbortErr = 16,
+
+    #[error("invalid EE context number")]
+    InvEecnErr = 17,
+
+    #[error("invalid EE context state error")]
+    InvEecStateErr = 18,
+
+    #[error("fatal error")]
+    FatalErr = 19,
+
+    #[error("response timeout error")]
+    RespTimeoutErr = 20,
+
+    #[error("general error")]
+    GeneralErr = 21,
+}
+
+impl From<u32> for CqeStatus {
+    fn from(n: u32) -> Self {
+        match n {
+            0 => CqeStatus::Success,
+            1 => CqeStatus::LocLenErr,
+            2 => CqeStatus::LocQpOpErr,
+            3 => CqeStatus::LocEecOpErr,
+            4 => CqeStatus::LocProtErr,
+            5 => CqeStatus::WrFlushErr,
+            6 => CqeStatus::MwBindErr,
+            7 => CqeStatus::BadRespErr,
+            8 => CqeStatus::LocAccessErr,
+            9 => CqeStatus::RemInvReqErr,
+            10 => CqeStatus::RemAccessErr,
+            11 => CqeStatus::RemOpErr,
+            12 => CqeStatus::RetryExcErr,
+            13 => CqeStatus::RnrRetryExcErr,
+            14 => CqeStatus::LocRddViolErr,
+            15 => CqeStatus::RemInvRdReqErr,
+            16 => CqeStatus::RemAbortErr,
+            17 => CqeStatus::InvEecnErr,
+            18 => CqeStatus::InvEecStateErr,
+            19 => CqeStatus::FatalErr,
+            20 => CqeStatus::RespTimeoutErr,
+            21 => CqeStatus::GeneralErr,
+            _ => panic!("invalid status: {}", n),
+        }
+    }
+}
 
 /// Work completion entry.
 ///
@@ -27,8 +155,8 @@ impl Wc {
 
     /// Get the completion status.
     #[inline]
-    pub fn status(&self) -> u32 {
-        self.0.status
+    pub fn status(&self) -> CqeStatus {
+        CqeStatus::from(self.0.status)
     }
 
     /// Get the completion status as a `Result`.
@@ -37,17 +165,17 @@ impl Wc {
     /// - Otherwise, return an error.
     #[inline]
     pub fn result(&self) -> Result<usize> {
-        if self.status() == ibv_wc_status::IBV_WC_SUCCESS {
+        if self.status() == CqeStatus::Success {
             Ok(self.0.byte_len as usize)
         } else {
-            Err(anyhow::anyhow!(self.0.status))
+            Err(self.status().into())
         }
     }
 
     /// Get the opcode of the work request.
     #[inline]
-    pub fn opcode(&self) -> u32 {
-        self.0.opcode
+    pub fn opcode(&self) -> CqeOpcode {
+        CqeOpcode::from(self.0.opcode)
     }
 
     /// Get the number of bytes processed or transferred.
