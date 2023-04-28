@@ -484,7 +484,11 @@ impl<'a> Qp<'a> {
         wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: sgl.as_mut_ptr(),
+            sg_list: if local.len() == 0 {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_SEND,
             send_flags: if signal {
@@ -517,7 +521,11 @@ impl<'a> Qp<'a> {
         wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: sgl.as_mut_ptr(),
+            sg_list: if local.len() == 0 {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_SEND,
             send_flags: if signal {
@@ -548,7 +556,11 @@ impl<'a> Qp<'a> {
         let mut wr = ibv_recv_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: sgl.as_mut_ptr(),
+            sg_list: if local.len() == 0 {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
             num_sge: local.len() as i32,
         };
         let ret = unsafe {
@@ -582,7 +594,11 @@ impl<'a> Qp<'a> {
         wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: sgl.as_mut_ptr(),
+            sg_list: if local.len() == 0 {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_RDMA_READ,
             send_flags: if signal {
@@ -627,7 +643,11 @@ impl<'a> Qp<'a> {
         wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: sgl.as_mut_ptr(),
+            sg_list: if local.len() == 0 {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
             num_sge: local.len() as i32,
             opcode: if imm.is_none() {
                 ibv_wr_opcode::IBV_WR_RDMA_WRITE
