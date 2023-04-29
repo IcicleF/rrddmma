@@ -183,6 +183,22 @@ impl Wc {
     pub fn bytes(&self) -> usize {
         self.0.byte_len as usize
     }
+
+    /// Get the immediate data.
+    #[inline]
+    pub fn imm(&self) -> Option<u32> {
+        if (self.0.wc_flags & ibv_wc_flags::IBV_WC_WITH_IMM.0) != 0 {
+            unsafe { self.0.imm_data_invalidated_rkey_union.imm_data as u32 }.into()
+        } else {
+            None
+        }
+    }
+
+    /// Get the immediate data, without checking the validity.
+    #[inline]
+    pub unsafe fn imm_unchecked(&self) -> u32 {
+        self.0.imm_data_invalidated_rkey_union.imm_data as u32
+    }
 }
 
 impl Default for Wc {
