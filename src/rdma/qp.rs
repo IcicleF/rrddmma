@@ -10,7 +10,7 @@ use super::pd::Pd;
 use anyhow::Result;
 use rdma_sys::*;
 
-/// Queue pair type
+/// Queue pair type.
 #[derive(fmt::Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QpType {
     /// Reliable connection
@@ -38,7 +38,7 @@ impl From<u32> for QpType {
     }
 }
 
-/// Queue pair state
+/// Queue pair state.
 #[derive(fmt::Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QpState {
     /// Reset
@@ -78,16 +78,58 @@ impl From<u32> for QpState {
     }
 }
 
-/// Queue pair capability attributes
+/// Queue pair capability attributes.
 #[derive(fmt::Debug, Clone, Copy)]
 pub struct QpCaps {
+    /// The maximum number of outstanding Work Requests that can be posted to
+    /// the Send Queue in that Queue Pair.
+    ///
+    /// Value can be [0..`dev_cap.max_qp_wr`].
+    ///
+    /// **NOTE:** There may be RDMA devices that for specific transport types
+    /// may support less outstanding Work Requests than the maximum reported
+    /// value.
     pub max_send_wr: u32,
+
+    /// The maximum number of outstanding Work Requests that can be posted to
+    /// the Receive Queue in that Queue Pair.
+    ///
+    /// Value can be [0..`dev_cap.max_qp_wr`].
+    ///
+    /// **NOTE:** There may be RDMA devices that for specific transport types
+    /// may support less outstanding Work Requests than the maximum reported
+    /// value. This value is ignored if the Queue Pair is associated with an SRQ.
     pub max_recv_wr: u32,
+
+    /// The maximum number of scatter/gather elements in any Work Request that
+    /// can be posted to the Send Queue in that Queue Pair.
+    ///
+    /// Value can be [0..`dev_cap.max_sge`].
+    ///
+    /// **NOTE:** There may be RDMA devices that for specific transport types
+    /// may support less scatter/gather elements than the maximum reported value.
     pub max_send_sge: u32,
+
+    /// The maximum number of scatter/gather elements in any Work Request that
+    /// can be posted to the Receive Queue in that Queue Pair.
+    ///
+    /// Value can be [0..`dev_cap.max_sge`].
+    ///
+    /// **NOTE:** There may be RDMA devices that for specific transport types
+    /// may support less scatter/gather elements than the maximum reported value.
+    /// This value is ignored if the Queue Pair is associated with an SRQ.
     pub max_recv_sge: u32,
+
+    /// The maximum message size (in bytes) that can be posted inline to the
+    /// Send Queue. If no inline message is requested, the value can be 0.
     pub max_inline_data: u32,
 }
 
+/// Generate a default RDMA queue pair capabilities setting.
+/// The queue pair can:
+/// - maintain up to 128 outstanding send/recv work requests each,
+/// - set a SGE of up to 16 entries per send/recv work request, and
+/// - send up to 64 bytes of inline data.
 impl Default for QpCaps {
     fn default() -> Self {
         QpCaps {
@@ -118,7 +160,7 @@ impl QpCaps {
     }
 }
 
-/// Queue pair initialization attributes
+/// Queue pair initialization attributes.
 #[derive(Debug, Clone)]
 pub struct QpInitAttr<'a> {
     pub send_cq: Arc<Cq<'a>>,
@@ -166,7 +208,7 @@ impl<'a> From<QpInitAttr<'a>> for ibv_qp_init_attr {
     }
 }
 
-/// Endpoint data
+/// Endpoint (NIC port & queue pair) data.
 #[derive(fmt::Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct QpEndpoint {
     pub gid: Gid,
@@ -190,20 +232,7 @@ impl QpEndpoint {
     }
 }
 
-impl Default for QpEndpoint {
-    fn default() -> Self {
-        QpEndpoint {
-            gid: Gid::from([0; 16]),
-            port_num: 1,
-            lid: 0,
-            qpn: 0,
-            psn: 0,
-            qkey: 0,
-        }
-    }
-}
-
-/// Peer data that can be used in sends
+/// Peer queue pair information that can be used in sends.
 pub struct QpPeer {
     pub ah: NonNull<ibv_ah>,
     pub ep: QpEndpoint,
@@ -250,7 +279,7 @@ impl Drop for QpPeer {
     }
 }
 
-/// Queue Pair.
+/// Queue pair.
 pub struct Qp<'a> {
     pd: &'a Pd<'a>,
     qp: NonNull<ibv_qp>,

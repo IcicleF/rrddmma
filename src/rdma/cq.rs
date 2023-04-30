@@ -7,6 +7,7 @@ use anyhow::Result;
 use rdma_sys::*;
 use thiserror::Error;
 
+/// Opcode of a completion queue entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CqeOpcode {
     Send = 0,
@@ -35,6 +36,7 @@ impl From<u32> for CqeOpcode {
     }
 }
 
+/// Status of a completion queue entry.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum CqeStatus {
     #[error("success")]
@@ -265,6 +267,11 @@ impl<'a> Cq<'a> {
     /// Get the underlying `ibv_cq` pointer.
     pub fn as_ptr(&self) -> *mut ibv_cq {
         self.cq.as_ptr()
+    }
+
+    /// Get the device context of the completion queue.
+    pub fn ctx(&self) -> &Context {
+        self.ctx
     }
 
     /// Non-blocking poll.

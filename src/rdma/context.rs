@@ -7,7 +7,7 @@ use super::gid::Gid;
 use anyhow;
 use rdma_sys::*;
 
-/// RDMA device context.
+/// Device context.
 ///
 /// This structure owns a valid opened device context (`ibv_context`) and is responsible of closing it
 /// when dropped.
@@ -122,7 +122,7 @@ impl Context {
         self.gid.clone()
     }
 
-    // Get the GID index passed by the user when opening this context.
+    /// Get the GID index passed by the user when opening this context.
     #[inline]
     pub fn gid_index(&self) -> u8 {
         self.gid_index
@@ -137,6 +137,8 @@ impl Context {
     }
 }
 
+/// Close the device context when dropped.
+/// `mem::forget`-ting this structure will result in a resource leakage.
 impl Drop for Context {
     fn drop(&mut self) {
         unsafe { ibv_close_device(self.ctx.as_ptr()) };

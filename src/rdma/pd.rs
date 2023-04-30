@@ -17,22 +17,27 @@ pub struct Pd<'a> {
 unsafe impl<'a> Sync for Pd<'a> {}
 
 impl<'a> Pd<'a> {
-    pub fn alloc(ctx: &'a Context) -> anyhow::Result<Self> {
+    /// Allocate a protection domain for the given RDMA device context.
+    pub fn new(ctx: &'a Context) -> anyhow::Result<Self> {
         let pd = NonNull::new(unsafe { ibv_alloc_pd(ctx.as_ptr()) })
             .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
 
         Ok(Self { ctx, pd })
     }
 
+    /// Get the underlying `ibv_pd` structure.
     pub fn as_ptr(&self) -> *mut ibv_pd {
         self.pd.as_ptr()
     }
 
+    /// Get a reference to the underlying `Context`.
     pub fn context(&self) -> &Context {
         self.ctx
     }
 }
 
+/// Deallocates the protection domain when dropped.
+/// `mem::forget`-ting this structure will result in a resource leakage.
 impl<'a> Drop for Pd<'a> {
     fn drop(&mut self) {
         unsafe { ibv_dealloc_pd(self.as_ptr()) };
@@ -46,7 +51,7 @@ mod tests {
     #[test]
     fn test_alloc() {
         let ctx = Context::open(Some("mlx5_0"), 1, 0).unwrap();
-        let pd = Pd::alloc(&ctx).unwrap();
+        let pd = Pd::new(&ctx).unwrap();
         assert_eq!(pd.context().as_ptr(), ctx.as_ptr());
     }
 }

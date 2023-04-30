@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
 
     // Basic context & pd
     let context = rrddmma::Context::open(Some("mlx5_0"), 1, 0)?;
-    let pd = rrddmma::Pd::alloc(&context)?;
+    let pd = rrddmma::Pd::new(&context)?;
 
     rrddmma::ctrl::Barrier::wait(&cluster);
     let mut conns = HashMap::new();
@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     println!("connected ({})", conns.len());
 
     let buf = vec![0u8; 4096];
-    let mr = rrddmma::Mr::from_slice(&pd, &buf)?;
+    let mr = rrddmma::Mr::reg_slice(&pd, &buf)?;
 
     if cluster.myself() == 0 {
         let rem_mr = Connecter::new(&cluster, 1).recv_mr()?;

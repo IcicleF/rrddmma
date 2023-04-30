@@ -32,6 +32,21 @@ impl<'a> fmt::Debug for Mr<'a> {
 }
 
 impl<'a> Mr<'a> {
+    /// Register a memory region with the given protection domain.
+    ///
+    /// *Memory region* is an RDMA concept representing a handle to a
+    /// registry of a contiguous *virtual memory area*. In other words,
+    /// *region* and *area* are different things.
+    ///
+    /// This function is intentionally named `reg` instead of `new` to avoid
+    /// the possible confusion that the produced `Mr<'a>` holds the ownership
+    /// of the memory area and that it will deallocate the memory when dropped.
+    ///
+    /// The memory region is registered with the following access flags:
+    /// - `IBV_ACCESS_LOCAL_WRITE` for recv
+    /// - `IBV_ACCESS_REMOTE_WRITE` for remote RDMA write
+    /// - `IBV_ACCESS_REMOTE_READ` for remote RDMA read
+    /// - `IBV_ACCESS_REMOTE_ATOMIC` for remote atomics
     pub fn reg(pd: &'a Pd, addr: *mut u8, len: usize) -> anyhow::Result<Self> {
         let mr = NonNull::new(unsafe {
             ibv_reg_mr(
@@ -49,40 +64,50 @@ impl<'a> Mr<'a> {
         Ok(Self { pd, mr, addr, len })
     }
 
-    pub fn from_slice(pd: &'a Pd, buf: &[u8]) -> anyhow::Result<Self> {
+    /// Register a memory region with the given protection domain.
+    /// It simply calls `reg` with the pointer of the given slice.
+    pub fn reg_slice(pd: &'a Pd, buf: &[u8]) -> anyhow::Result<Self> {
         Self::reg(pd, buf.as_ptr() as *mut u8, buf.len())
     }
 
+    /// Get the underlying `ibv_mr` structure.
     #[inline]
     pub fn as_ptr(&self) -> *mut ibv_mr {
         self.mr.as_ptr()
     }
 
+    /// Get the start address of the registered memory area.
     #[inline]
     pub fn addr(&self) -> *mut u8 {
         self.addr
     }
 
+    /// Get the length of the registered memory area.
     #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Get the local key of the memory region.
     #[inline]
     pub fn lkey(&self) -> u32 {
         unsafe { (*self.mr.as_ptr()).lkey }
     }
 
+    /// Get the remote key of the memory region.
     #[inline]
     pub fn rkey(&self) -> u32 {
         unsafe { (*self.mr.as_ptr()).rkey }
     }
 
+    /// Get a memory region slice that represents the entire memory area.
     #[inline]
     pub fn as_slice(&self) -> MrSlice {
         MrSlice::new(self, 0..self.len())
     }
 
+    /// Get a memory region slice that represents the specified range of
+    /// the memory area. Returns `None` if the range is out of bounds.
     #[inline]
     pub fn get(&self, r: Range<usize>) -> Option<MrSlice> {
         if r.start <= r.end && r.end <= self.len() {
@@ -92,12 +117,17 @@ impl<'a> Mr<'a> {
         }
     }
 
+    /// Get a memory region slice that represents the specified range of
+    /// the memory area. The behavior is undefined if the range is out of
+    /// bounds.
     #[inline]
     unsafe fn get_unchecked(&self, r: Range<usize>) -> MrSlice {
         MrSlice::new(self, r)
     }
 }
 
+/// Deregister the memory region when dropped.
+/// `mem::forget`-ting this structure will result in a resource leakage.
 impl<'a> Drop for Mr<'a> {
     fn drop(&mut self) {
         unsafe {
@@ -106,6 +136,10 @@ impl<'a> Drop for Mr<'a> {
     }
 }
 
+/// Slice of a local memory region.
+///
+/// Data-plane verbs accept local memory region slices.
+/// In other words, a slice corresponds to an RDMA scatter-gather list entry.
 pub struct MrSlice<'a> {
     mr: &'a Mr<'a>,
     range: Range<usize>,
@@ -141,7 +175,7 @@ impl<'a> MrSlice<'a> {
     }
 }
 
-/// Remote Memory Region
+/// Remote memory region data.
 ///
 /// This structure contains remote memory region information and does not hold any resources locally.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -183,6 +217,10 @@ impl<'a> From<&'a Mr<'a>> for RemoteMr {
     }
 }
 
+/// Slice of a remote memory region.
+///
+/// RDMA one-sided verbs accept remote memory region slices.
+/// In other words, a slice corresponds to a `wr.wr.rdma` field in `ibv_send_wr`.
 #[derive(Debug, Clone)]
 pub struct RemoteMrSlice<'a> {
     mr: &'a RemoteMr,
