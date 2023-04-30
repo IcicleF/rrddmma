@@ -2,7 +2,10 @@ use super::cluster::Cluster;
 use std::io::prelude::*;
 use std::net::*;
 
-pub struct Barrier();
+/// Distributed barrier.
+///
+/// Synchronize all processes in the cluster.
+pub struct Barrier;
 
 impl Barrier {
     pub fn wait_on_port(cluster: &Cluster, port: u16) {

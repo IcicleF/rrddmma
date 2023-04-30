@@ -25,6 +25,7 @@ fn stream_read(stream: &mut &TcpStream) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Connection manager that connects with a specific remote peer.
 pub struct Connecter<'a> {
     cluster: &'a Cluster,
     with: usize,

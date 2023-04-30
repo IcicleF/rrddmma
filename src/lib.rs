@@ -3,4 +3,5 @@
 mod rdma;
 pub use rdma::{context::Context, cq::*, mr::*, pd::Pd, qp::*};
 
+/// Connection management utilities.
 pub mod ctrl;

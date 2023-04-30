@@ -3,6 +3,7 @@ use local_ip_address::list_afinet_netifas;
 use log;
 
 use std::io::prelude::*;
+use std::iter;
 use std::net::*;
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ fn is_my_ip(ip: &Ipv4Addr) -> bool {
         .any(|(_iface, if_ip)| *if_ip == IpAddr::V4(*ip))
 }
 
+/// Cluster information.
 #[derive(Debug, Clone)]
 pub struct Cluster {
     peers: Vec<Ipv4Addr>,
@@ -115,12 +117,12 @@ impl Cluster {
     }
 
     #[inline]
-    pub fn connect_all<'a, 'b>(
+    pub fn connect_all<'a, 'b: 'a>(
         &'a self,
         pd: &'b Pd<'b>,
         qp_type: QpType,
         num_links: usize,
-    ) -> ConnectionIter<'a, 'b> {
+    ) -> impl iter::Iterator<Item = (usize, Vec<(Qp<'b>, QpPeer)>)> + 'a {
         fn pow2_roundup(x: usize) -> usize {
             let mut n = 1;
             while n < x {
@@ -139,7 +141,7 @@ impl Cluster {
     }
 }
 
-pub struct ConnectionIter<'a, 'b> {
+struct ConnectionIter<'a, 'b> {
     cluster: &'a Cluster,
     pd: &'b Pd<'b>,
     n: usize,
@@ -148,7 +150,7 @@ pub struct ConnectionIter<'a, 'b> {
     num_links: usize,
 }
 
-impl<'a, 'b> std::iter::Iterator for ConnectionIter<'a, 'b> {
+impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
     type Item = (usize, Vec<(Qp<'b>, QpPeer)>);
 
     fn next(&mut self) -> Option<Self::Item> {
