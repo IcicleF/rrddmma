@@ -1,11 +1,12 @@
-use anyhow::Result;
-use local_ip_address::list_afinet_netifas;
-use log;
-
 use std::io::prelude::*;
 use std::iter;
 use std::net::*;
+use std::path::Path;
 use std::sync::Arc;
+
+use anyhow::Result;
+use local_ip_address::list_afinet_netifas;
+use log;
 
 use super::{barrier::Barrier, connecter::Connecter};
 use crate::rdma::{cq::Cq, pd::Pd, qp::*};
@@ -34,8 +35,8 @@ impl Cluster {
         Self::new_withid(peers, id)
     }
 
-    pub fn load_toml(config_file: &str) -> Result<Self> {
-        let mut file = std::fs::File::open(config_file)?;
+    pub fn load_toml(path: impl AsRef<Path>) -> Result<Self> {
+        let mut file = std::fs::File::open(path)?;
         let mut toml_str = String::new();
         file.read_to_string(&mut toml_str)?;
 

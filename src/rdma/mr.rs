@@ -121,7 +121,7 @@ impl<'a> Mr<'a> {
     /// the memory area. The behavior is undefined if the range is out of
     /// bounds.
     #[inline]
-    unsafe fn get_unchecked(&self, r: Range<usize>) -> MrSlice {
+    pub unsafe fn get_unchecked(&self, r: Range<usize>) -> MrSlice {
         MrSlice::new(self, r)
     }
 }
