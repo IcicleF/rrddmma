@@ -140,18 +140,10 @@ impl<'a> Drop for Mr<'a> {
 ///
 /// Data-plane verbs accept local memory region slices.
 /// In other words, a slice corresponds to an RDMA scatter-gather list entry.
+#[derive(Debug, Clone)]
 pub struct MrSlice<'a> {
     mr: &'a Mr<'a>,
     range: Range<usize>,
-}
-
-impl<'a> fmt::Debug for MrSlice<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MrSlice")
-            .field("mr", &self.mr)
-            .field("range", &self.range)
-            .finish()
-    }
 }
 
 impl<'a> MrSlice<'a> {
@@ -173,6 +165,31 @@ impl<'a> MrSlice<'a> {
     pub fn len(&self) -> usize {
         self.range.end - self.range.start
     }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut u8 {
+        unsafe { self.mr.addr().add(self.range.start) }
+    }
+
+    #[inline]
+    pub fn get(&self, r: Range<usize>) -> Option<MrSlice> {
+        if r.start <= r.end && r.end <= self.len() {
+            Some(MrSlice::new(
+                self.mr,
+                (self.range.start + r.start)..(self.range.start + r.end),
+            ))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub unsafe fn get_unchecked(&self, r: Range<usize>) -> MrSlice {
+        MrSlice::new(
+            self.mr,
+            (self.range.start + r.start)..(self.range.start + r.end),
+        )
+    }
 }
 
 /// Remote memory region data.
@@ -190,10 +207,12 @@ impl RemoteMr {
         Self { addr, len, rkey }
     }
 
+    #[inline]
     pub fn as_slice(&self) -> RemoteMrSlice {
         RemoteMrSlice::new(self, 0..self.len)
     }
 
+    #[inline]
     pub fn get(&self, r: Range<usize>) -> Option<RemoteMrSlice> {
         if r.start <= r.end && r.end <= self.len {
             Some(RemoteMrSlice::new(self, r))
@@ -202,6 +221,7 @@ impl RemoteMr {
         }
     }
 
+    #[inline]
     pub unsafe fn get_unchecked(&self, r: Range<usize>) -> RemoteMrSlice {
         RemoteMrSlice::new(self, r)
     }
@@ -245,6 +265,26 @@ impl<'a> RemoteMrSlice<'a> {
     #[inline]
     pub fn len(&self) -> usize {
         self.range.end - self.range.start
+    }
+
+    #[inline]
+    pub fn get(&self, r: Range<usize>) -> Option<RemoteMrSlice> {
+        if r.start <= r.end && r.end <= self.len() {
+            Some(RemoteMrSlice::new(
+                self.mr,
+                (self.range.start + r.start)..(self.range.start + r.end),
+            ))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub unsafe fn get_unchecked(&self, r: Range<usize>) -> RemoteMrSlice {
+        RemoteMrSlice::new(
+            self.mr,
+            (self.range.start + r.start)..(self.range.start + r.end),
+        )
     }
 }
 
