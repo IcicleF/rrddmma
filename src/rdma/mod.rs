@@ -5,3 +5,4 @@ pub mod gid;
 pub mod mr;
 pub mod pd;
 pub mod qp;
+pub mod wr;

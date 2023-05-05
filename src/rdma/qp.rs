@@ -6,6 +6,7 @@ use super::cq::Cq;
 use super::gid::Gid;
 use super::mr::*;
 use super::pd::Pd;
+use super::wr::*;
 
 use anyhow::Result;
 use rdma_sys::*;
@@ -482,33 +483,35 @@ impl<'a> Qp<'a> {
         Ok(())
     }
 
-    fn build_sgl(&self, slices: &[MrSlice]) -> Result<(Vec<ibv_sge>, usize)> {
-        if slices.len() > self.init_attr.cap.max_send_sge as usize {
-            return Err(anyhow::anyhow!(
-                "sge number {} > max allowed {}",
-                slices.len(),
-                self.init_attr.cap.max_send_sge
-            ));
+    /// Post a RDMA recv using the given buffer array.
+    ///
+    /// **NOTE:** This method has no mutable borrows it its parameters, but can
+    /// cause the content of the buffers to be modified!
+    pub fn recv(&self, local: &[MrSlice<'_>], wr_id: u64) -> Result<()> {
+        let mut sgl = build_sgl(local);
+        let mut wr = ibv_recv_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: if local.len() == 0 {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
+            num_sge: local.len() as i32,
+        };
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_recv(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(io::Error::last_os_error()))
         }
-
-        let sgl = slices
-            .iter()
-            .map(|slice| ibv_sge {
-                addr: slice.mr().addr() as u64 + slice.offset() as u64,
-                length: slice.len() as u32,
-                lkey: slice.mr().lkey(),
-            })
-            .collect::<Vec<_>>();
-        let total_len = slices.iter().map(|slice| slice.len()).sum();
-
-        if total_len > (2usize << 30) {
-            return Err(anyhow::anyhow!("payload too large"));
-        }
-        Ok((sgl, total_len))
     }
 
-    pub fn send(&self, local: &[MrSlice], wr_id: u64, signal: bool) -> Result<()> {
-        let (mut sgl, _) = self.build_sgl(local)?;
+    pub fn send(&self, local: &[MrSlice<'_>], wr_id: u64, signal: bool) -> Result<()> {
+        let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
             wr_id,
@@ -541,11 +544,11 @@ impl<'a> Qp<'a> {
     pub fn send_to(
         &self,
         peer: &QpPeer,
-        local: &[MrSlice],
+        local: &[MrSlice<'_>],
         wr_id: u64,
         signal: bool,
     ) -> Result<()> {
-        let (mut sgl, _) = self.build_sgl(local)?;
+        let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
             wr_id,
@@ -576,49 +579,14 @@ impl<'a> Qp<'a> {
         }
     }
 
-    /// Post a RDMA recv using the given buffer array.
-    ///
-    /// **NOTE:** This method has no mutable borrows it its parameters, but can
-    /// cause the content of the buffers to be modified!
-    pub fn recv(&self, local: &[MrSlice], wr_id: u64) -> Result<()> {
-        let (mut sgl, _) = self.build_sgl(local)?;
-        let mut wr = ibv_recv_wr {
-            wr_id,
-            next: ptr::null_mut(),
-            sg_list: if local.len() == 0 {
-                ptr::null_mut()
-            } else {
-                sgl.as_mut_ptr()
-            },
-            num_sge: local.len() as i32,
-        };
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.qp.as_ptr(), &mut wr, &mut bad_wr)
-        };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
-    }
-
     pub fn read(
         &self,
-        local: &[MrSlice],
-        remote: &RemoteMrSlice,
+        local: &[MrSlice<'_>],
+        remote: &RemoteMrSlice<'_>,
         wr_id: u64,
         signal: bool,
     ) -> Result<()> {
-        let (mut sgl, len) = self.build_sgl(local)?;
-        if len > remote.len() {
-            log::warn!(
-                "rrddmma: RDMA read sgl length {} > provided length {}",
-                len,
-                remote.len()
-            );
-        }
-
+        let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
             wr_id,
@@ -653,21 +621,13 @@ impl<'a> Qp<'a> {
 
     pub fn write(
         &self,
-        local: &[MrSlice],
-        remote: &RemoteMrSlice,
+        local: &[MrSlice<'_>],
+        remote: &RemoteMrSlice<'_>,
         wr_id: u64,
         imm: Option<u32>,
         signal: bool,
     ) -> Result<()> {
-        let (mut sgl, len) = self.build_sgl(local)?;
-        if len > remote.len() {
-            log::warn!(
-                "rrddmma: RDMA write sgl length {} > provided length {}",
-                len,
-                remote.len()
-            );
-        }
-
+        let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
             wr_id,
@@ -706,6 +666,42 @@ impl<'a> Qp<'a> {
             Err(anyhow::anyhow!(io::Error::last_os_error()))
         }
     }
+
+    #[inline]
+    pub fn post_send(&self, ops: &[SendWr<'_>]) -> Result<()> {
+        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
+        for i in 0..(wrs.len() - 1) {
+            wrs[i].next = &mut wrs[i + 1];
+        }
+
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(io::Error::last_os_error()))
+        }
+    }
+
+    #[inline]
+    pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
+        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
+        for i in 0..(wrs.len() - 1) {
+            wrs[i].next = &mut wrs[i + 1];
+        }
+
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_recv(self.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
+        };
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(io::Error::last_os_error()))
+        }
+    }
 }
 
 impl<'a> Drop for Qp<'a> {
@@ -714,4 +710,16 @@ impl<'a> Drop for Qp<'a> {
             ibv_destroy_qp(self.qp.as_ptr());
         }
     }
+}
+
+#[inline]
+pub fn build_sgl<'a>(slices: &'a [MrSlice<'a>]) -> Vec<ibv_sge> {
+    slices
+        .iter()
+        .map(|slice| ibv_sge {
+            addr: slice.mr().addr() as u64 + slice.offset() as u64,
+            length: slice.len() as u32,
+            lkey: slice.mr().lkey(),
+        })
+        .collect()
 }
