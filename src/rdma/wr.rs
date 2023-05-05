@@ -6,14 +6,8 @@ use rdma_sys::*;
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
 
-/// Wrapper of basic parameters of a RDMA work request.
-///
-/// Every work request must at least contain:
-/// - a list of registered memory areas (can be empty) as the data resource
-///   or target,
-/// - a work request ID, and
-/// - a set of flags (currently, only to signal or not).
-pub struct WrBase<'a> {
+/// Wrapper of basic parameters of an RDMA work request.
+struct WrBase<'a> {
     local: Vec<ibv_sge>,
     wr_id: u64,
     signal: bool,
@@ -24,9 +18,17 @@ pub struct WrBase<'a> {
     marker: PhantomData<&'a Mr<'a>>,
 }
 
-/// Send work request elements other than the basics.
+/// Send work request details.
+///
+/// Aside from the necessities of every RDMA work request:
+/// - a list of registered memory areas (can be empty) as the data resource
+///   or target,
+/// - a work request ID, and
+/// - a set of flags (currently, only to signal or not),
+///
+/// this type holds the remaining parameters for each type of send work request.
 pub enum SendWrDetails<'a> {
-    /// Send requires basic parameters and an optional immediate.
+    /// Send requires an optional immediate.
     Send(Option<u32>),
 
     /// Send via UD QPs requires specifying the target and an optional immediate.

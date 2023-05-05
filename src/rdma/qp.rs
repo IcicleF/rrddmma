@@ -725,7 +725,7 @@ impl<'a> Drop for Qp<'a> {
 }
 
 #[inline]
-pub fn build_sgl<'a>(slices: &'a [MrSlice<'a>]) -> Vec<ibv_sge> {
+pub(crate) fn build_sgl<'a>(slices: &'a [MrSlice<'a>]) -> Vec<ibv_sge> {
     slices
         .iter()
         .map(|slice| ibv_sge {
