@@ -212,7 +212,7 @@ pub enum CqeStatus {
 impl From<u32> for CqeStatus {
     fn from(n: u32) -> Self {
         match n {
-            x if x < ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE => unsafe { std::mem::transmute(n) },
+            x if x <= ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE => unsafe { std::mem::transmute(n) },
             _ => panic!("invalid wc status: {}", n),
         }
     }
