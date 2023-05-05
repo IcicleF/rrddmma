@@ -669,7 +669,13 @@ impl<'a> Qp<'a> {
 
     #[inline]
     pub fn post_send(&self, ops: &[SendWr<'_>]) -> Result<()> {
-        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
+        // Safety: we only hold references to the `SendWr`s, whose lifetimes
+        // can only outlive this function. `ibv_post_send` is used inside this
+        // function, so the work requests are guaranteed to be valid.
+        let mut wrs = ops
+            .iter()
+            .map(|op| unsafe { op.to_wr() })
+            .collect::<Vec<_>>();
         for i in 0..(wrs.len() - 1) {
             wrs[i].next = &mut wrs[i + 1];
         }
@@ -687,7 +693,13 @@ impl<'a> Qp<'a> {
 
     #[inline]
     pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
-        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
+        // Safety: we only hold references to the `RecvWr`s, whose lifetimes
+        // can only outlive this function. `ibv_post_recv` is used inside this
+        // function, so the work requests are guaranteed to be valid.
+        let mut wrs = ops
+            .iter()
+            .map(|op| unsafe { op.to_wr() })
+            .collect::<Vec<_>>();
         for i in 0..(wrs.len() - 1) {
             wrs[i].next = &mut wrs[i + 1];
         }

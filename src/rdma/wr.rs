@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::{mem, ptr};
 
 use rdma_sys::*;
@@ -12,14 +13,19 @@ use super::qp::{build_sgl, QpPeer};
 ///   or target,
 /// - a work request ID, and
 /// - a set of flags (currently, only to signal or not).
-pub struct WrBase {
+pub struct WrBase<'a> {
     local: Vec<ibv_sge>,
     wr_id: u64,
     signal: bool,
+
+    /// Pretend to hold a reference to the original memory regions even if we
+    /// have already transformed the slices into a scatter-gather list.
+    /// This prevents the SGL from being invalid.
+    marker: PhantomData<&'a Mr<'a>>,
 }
 
 /// Send work request elements other than the basics.
-pub enum SendWrAdditions<'a> {
+pub enum SendWrDetails<'a> {
     /// Send requires basic parameters and an optional immediate.
     Send(Option<u32>),
 
@@ -37,26 +43,38 @@ pub enum SendWrAdditions<'a> {
 ///
 /// Use this type when you want to post multiple send work requests to a
 /// queue pair at once (which can reduce doorbell ringing overheads).
-pub struct SendWr<'a>(WrBase, SendWrAdditions<'a>);
+pub struct SendWr<'a>(WrBase<'a>, SendWrDetails<'a>);
 
 impl<'a> SendWr<'a> {
     pub fn new(
         local: &'a [MrSlice<'a>],
         wr_id: u64,
         signal: bool,
-        additions: SendWrAdditions<'a>,
+        additions: SendWrDetails<'a>,
     ) -> Self {
         Self(
             WrBase {
                 local: build_sgl(local),
                 wr_id,
                 signal,
+                marker: PhantomData,
             },
             additions,
         )
     }
 
-    pub fn to_wr(&self) -> ibv_send_wr {
+    /// Translate the `SendWr` into a `ibv_send_wr` that can be passed to
+    /// `ibv_post_send`.
+    ///
+    /// # Safety
+    ///
+    /// The resulted `ibv_send_wr` is a foreign type and has no connection with
+    /// the original `SendWr`, which holds the scatter-gather list. The compiler
+    /// therefore cannot enforce that the `RecvWr` outlives the return value.
+    ///
+    /// The caller must ensure that the `SendWr` is not dropped before the
+    /// return value is posted to the RDMA device.
+    pub unsafe fn to_wr(&self) -> ibv_send_wr {
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
 
         wr.wr_id = self.0.wr_id;
@@ -84,13 +102,13 @@ impl<'a> SendWr<'a> {
             }
         }
         match &self.1 {
-            SendWrAdditions::Send(imm) => fill_opcode_with_imm(
+            SendWrDetails::Send(imm) => fill_opcode_with_imm(
                 &mut wr,
                 &imm,
                 ibv_wr_opcode::IBV_WR_SEND,
                 ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
             ),
-            SendWrAdditions::SendTo(peer, imm) => {
+            SendWrDetails::SendTo(peer, imm) => {
                 wr.wr.ud = ud_t::from(peer);
                 fill_opcode_with_imm(
                     &mut wr,
@@ -99,11 +117,11 @@ impl<'a> SendWr<'a> {
                     ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
                 );
             }
-            SendWrAdditions::Read(remote) => {
+            SendWrDetails::Read(remote) => {
                 wr.wr.rdma = rdma_t::from(*remote);
                 wr.opcode = ibv_wr_opcode::IBV_WR_RDMA_READ;
             }
-            SendWrAdditions::Write(remote, imm) => {
+            SendWrDetails::Write(remote, imm) => {
                 wr.wr.rdma = rdma_t::from(*remote);
                 fill_opcode_with_imm(
                     &mut wr,
@@ -124,18 +142,30 @@ impl<'a> SendWr<'a> {
 ///
 /// Use this type when you want to post multiple recv work requests to a
 /// queue pair at once (which can reduce doorbell ringing overheads).
-pub struct RecvWr(WrBase);
+pub struct RecvWr<'a>(WrBase<'a>);
 
-impl<'a> RecvWr {
+impl<'a> RecvWr<'a> {
     pub fn new(local: &'a [MrSlice<'a>], wr_id: u64, signal: bool) -> Self {
         Self(WrBase {
             local: build_sgl(local),
             wr_id,
             signal,
+            marker: PhantomData,
         })
     }
 
-    pub fn to_wr(&self) -> ibv_recv_wr {
+    /// Translate the `RecvWr` into a `ibv_recv_wr` that can be passed to
+    /// `ibv_post_recv`.
+    ///
+    /// # Safety
+    ///
+    /// The resulted `ibv_recv_wr` is a foreign type and has no connection with
+    /// the original `RecvWr`, which holds the scatter-gather list. The compiler
+    /// therefore cannot enforce that the `RecvWr` outlives the return value.
+    ///
+    /// The caller must ensure that the `RecvWr` is not dropped before the
+    /// return value is posted to the RDMA device.
+    pub unsafe fn to_wr(&self) -> ibv_recv_wr {
         ibv_recv_wr {
             wr_id: self.0.wr_id,
             sg_list: self.0.local.as_ptr() as *mut _,
