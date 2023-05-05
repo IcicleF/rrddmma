@@ -49,6 +49,7 @@ impl From<u32> for CqeOpcode {
 
 /// Status of a completion queue entry.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[repr(u32)]
 pub enum CqeStatus {
     /// **Operation completed successfully**: this means that the corresponding
     /// Work Request (and all of the unsignaled Work Requests that were posted
@@ -191,6 +192,18 @@ pub enum CqeStatus {
     #[error("response timeout error")]
     RespTimeoutErr = ibv_wc_status::IBV_WC_RESP_TIMEOUT_ERR as _,
 
+    /// **Tag Matching Error**: a failure occurred when trying to issue an
+    /// `ibv_post_srq_ops` with opcode `IBV_WR_TAG_DEL` to remove a previously
+    /// added tag entry, due to concurrent tag consumption.
+    #[error("tag matching error")]
+    TmErr = ibv_wc_status::IBV_WC_TM_ERR as _,
+
+    /// **Rendezvous Request Tagged Buffer Insufficient**: this is due to
+    /// a posted tagged buffer is insufficient to hold the data of a
+    /// rendezvous request.
+    #[error("rendezvous request tagged buffer insufficient")]
+    TmRndvIncomplete = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE as _,
+
     /// **General Error**: other error which isn't one of the above errors.
     #[error("general error")]
     GeneralErr = ibv_wc_status::IBV_WC_GENERAL_ERR as _,
@@ -199,28 +212,7 @@ pub enum CqeStatus {
 impl From<u32> for CqeStatus {
     fn from(n: u32) -> Self {
         match n {
-            ibv_wc_status::IBV_WC_SUCCESS => CqeStatus::Success,
-            ibv_wc_status::IBV_WC_LOC_LEN_ERR => CqeStatus::LocLenErr,
-            ibv_wc_status::IBV_WC_LOC_QP_OP_ERR => CqeStatus::LocQpOpErr,
-            ibv_wc_status::IBV_WC_LOC_EEC_OP_ERR => CqeStatus::LocEecOpErr,
-            ibv_wc_status::IBV_WC_LOC_PROT_ERR => CqeStatus::LocProtErr,
-            ibv_wc_status::IBV_WC_WR_FLUSH_ERR => CqeStatus::WrFlushErr,
-            ibv_wc_status::IBV_WC_MW_BIND_ERR => CqeStatus::MwBindErr,
-            ibv_wc_status::IBV_WC_BAD_RESP_ERR => CqeStatus::BadRespErr,
-            ibv_wc_status::IBV_WC_LOC_ACCESS_ERR => CqeStatus::LocAccessErr,
-            ibv_wc_status::IBV_WC_REM_INV_REQ_ERR => CqeStatus::RemInvReqErr,
-            ibv_wc_status::IBV_WC_REM_ACCESS_ERR => CqeStatus::RemAccessErr,
-            ibv_wc_status::IBV_WC_REM_OP_ERR => CqeStatus::RemOpErr,
-            ibv_wc_status::IBV_WC_RETRY_EXC_ERR => CqeStatus::RetryExcErr,
-            ibv_wc_status::IBV_WC_RNR_RETRY_EXC_ERR => CqeStatus::RnrRetryExcErr,
-            ibv_wc_status::IBV_WC_LOC_RDD_VIOL_ERR => CqeStatus::LocRddViolErr,
-            ibv_wc_status::IBV_WC_REM_INV_RD_REQ_ERR => CqeStatus::RemInvRdReqErr,
-            ibv_wc_status::IBV_WC_REM_ABORT_ERR => CqeStatus::RemAbortErr,
-            ibv_wc_status::IBV_WC_INV_EECN_ERR => CqeStatus::InvEecnErr,
-            ibv_wc_status::IBV_WC_INV_EEC_STATE_ERR => CqeStatus::InvEecStateErr,
-            ibv_wc_status::IBV_WC_FATAL_ERR => CqeStatus::FatalErr,
-            ibv_wc_status::IBV_WC_RESP_TIMEOUT_ERR => CqeStatus::RespTimeoutErr,
-            ibv_wc_status::IBV_WC_GENERAL_ERR => CqeStatus::GeneralErr,
+            x if x < ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE => unsafe { std::mem::transmute(n) },
             _ => panic!("invalid wc status: {}", n),
         }
     }
