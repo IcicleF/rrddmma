@@ -20,6 +20,8 @@ pub struct Mr<'a> {
     len: usize,
 }
 
+/// Access to the same memory region from multiple threads is guaranteed to be
+/// safe by the ibverbs userspace driver.
 unsafe impl<'a> Sync for Mr<'a> {}
 
 impl<'a> fmt::Debug for Mr<'a> {
@@ -107,9 +109,9 @@ impl<'a> Mr<'a> {
     }
 
     /// Get a memory region slice that represents the specified range of
-    /// the memory area. Returns `None` if the range is out of bounds.
+    /// the memory area. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get(&self, r: Range<usize>) -> Option<MrSlice> {
+    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice> {
         if r.start <= r.end && r.end <= self.len() {
             Some(MrSlice::new(self, r))
         } else {
@@ -117,11 +119,21 @@ impl<'a> Mr<'a> {
         }
     }
 
+    /// Get a memory region slice from a pointer inside the memory area
+    /// and a specified length. The behavior is undefined if the pointer
+    /// is not contained within the MR or the specified slice (ptr..(ptr + len))
+    /// is out of bounds.
+    #[inline]
+    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
+        let offset = ptr as usize - self.addr as usize;
+        self.get_slice_unchecked(offset..(offset + len))
+    }
+
     /// Get a memory region slice that represents the specified range of
     /// the memory area. The behavior is undefined if the range is out of
     /// bounds.
     #[inline]
-    pub unsafe fn get_unchecked(&self, r: Range<usize>) -> MrSlice {
+    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice {
         MrSlice::new(self, r)
     }
 }
@@ -147,32 +159,38 @@ pub struct MrSlice<'a> {
 }
 
 impl<'a> MrSlice<'a> {
+    /// Create a new memory region slice of the given MR and range.
     pub fn new(mr: &'a Mr, range: Range<usize>) -> Self {
         Self { mr, range }
     }
 
+    /// Get the underlying `Mr` structure.
     #[inline]
     pub fn mr(&self) -> &'a Mr {
         &self.mr
     }
 
+    /// Get the starting offset of the slice with regard to the original MR.
     #[inline]
     pub fn offset(&self) -> usize {
         self.range.start
     }
 
+    /// Get the length of the slice.
     #[inline]
     pub fn len(&self) -> usize {
         self.range.end - self.range.start
     }
 
+    /// Get the starting address of the slice.
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         unsafe { self.mr.addr().add(self.range.start) }
     }
 
+    /// Sub-slicing this slice. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get(&self, r: Range<usize>) -> Option<MrSlice> {
+    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice> {
         if r.start <= r.end && r.end <= self.len() {
             Some(MrSlice::new(
                 self.mr,
@@ -184,7 +202,13 @@ impl<'a> MrSlice<'a> {
     }
 
     #[inline]
-    pub unsafe fn get_unchecked(&self, r: Range<usize>) -> MrSlice {
+    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
+        let offset = ptr as usize - self.as_ptr() as usize;
+        self.get_slice_unchecked(offset..(offset + len))
+    }
+
+    #[inline]
+    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice {
         MrSlice::new(
             self.mr,
             (self.range.start + r.start)..(self.range.start + r.end),

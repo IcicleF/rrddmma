@@ -28,7 +28,13 @@ fn main() -> anyhow::Result<()> {
         let qp = &conns[&1][0].0;
         {
             let start_time = std::time::Instant::now();
-            qp.write(&[mr.get(0..8).unwrap()], &rem_mr.as_slice(), 0, None, true)?;
+            qp.write(
+                &[mr.get_slice(0..8).unwrap()],
+                &rem_mr.as_slice(),
+                0,
+                None,
+                true,
+            )?;
             qp.scq().poll_nocqe_blocking(1)?;
             let end_time = std::time::Instant::now();
 

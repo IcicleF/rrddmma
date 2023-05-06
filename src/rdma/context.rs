@@ -9,15 +9,12 @@ use rdma_sys::*;
 
 /// Device context.
 ///
-/// This structure owns a valid opened device context (`ibv_context`) and is responsible of closing it
-/// when dropped.
+/// This structure owns a valid opened device context (`ibv_context`) and is
+/// responsible of closing it when dropped.
 ///
-/// Rather than a pure `ibv_context`, this structure also specifies a device port.
-/// To operate on different ports of the same device, it is required to create multiple `Context` objects.
-///
-/// Because the inner `ibv_context` is owned by this structure, `Context` is `!Send` and cannot be cloned.
-/// However, it is `Sync` because access to the same device from multiple threads is guaranteed by the ibverbs
-/// userspace driver.
+/// **NOTE:** Rather than a pure `ibv_context`, this structure also specifies a
+/// device port. To operate on different ports of the same device, it is required
+/// to create multiple `Context` objects.
 #[allow(dead_code)]
 pub struct Context {
     ctx: NonNull<ibv_context>,
@@ -29,6 +26,8 @@ pub struct Context {
     gid_index: u8,
 }
 
+/// Access to the same device from multiple threads is guaranteed to be safe by
+/// the ibverbs userspace driver.
 unsafe impl Sync for Context {}
 
 impl fmt::Debug for Context {

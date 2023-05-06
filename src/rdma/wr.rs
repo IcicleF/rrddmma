@@ -35,10 +35,10 @@ pub enum SendWrDetails<'a> {
     SendTo(QpPeer, Option<u32>),
 
     /// Read requires a remote memory area to read from.
-    Read(&'a RemoteMrSlice<'a>),
+    Read(RemoteMrSlice<'a>),
 
     /// Write requires a remote memory area to write to and an optional immediate.
-    Write(&'a RemoteMrSlice<'a>, Option<u32>),
+    Write(RemoteMrSlice<'a>, Option<u32>),
 }
 
 /// Send work request.
@@ -47,9 +47,11 @@ pub enum SendWrDetails<'a> {
 /// queue pair at once (which can reduce doorbell ringing overheads).
 pub struct SendWr<'a>(WrBase<'a>, SendWrDetails<'a>);
 
-impl<'a> SendWr<'a> {
+impl<'a, 'ms> SendWr<'a> {
+    /// Create a new send work request with basic parameters and the details
+    /// that specifies its concrete type.
     pub fn new(
-        local: &'a [MrSlice<'a>],
+        local: &'ms [MrSlice<'a>],
         wr_id: u64,
         signal: bool,
         additions: SendWrDetails<'a>,
@@ -67,16 +69,7 @@ impl<'a> SendWr<'a> {
 
     /// Translate the `SendWr` into a `ibv_send_wr` that can be passed to
     /// `ibv_post_send`.
-    ///
-    /// # Safety
-    ///
-    /// The resulted `ibv_send_wr` is a foreign type and has no connection with
-    /// the original `SendWr`, which holds the scatter-gather list. The compiler
-    /// therefore cannot enforce that the `RecvWr` outlives the return value.
-    ///
-    /// The caller must ensure that the `SendWr` is not dropped before the
-    /// return value is posted to the RDMA device.
-    pub unsafe fn to_wr(&self) -> ibv_send_wr {
+    pub fn to_wr(&self) -> ibv_send_wr {
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
 
         wr.wr_id = self.0.wr_id;
@@ -120,11 +113,11 @@ impl<'a> SendWr<'a> {
                 );
             }
             SendWrDetails::Read(remote) => {
-                wr.wr.rdma = rdma_t::from(*remote);
+                wr.wr.rdma = rdma_t::from(remote);
                 wr.opcode = ibv_wr_opcode::IBV_WR_RDMA_READ;
             }
             SendWrDetails::Write(remote, imm) => {
-                wr.wr.rdma = rdma_t::from(*remote);
+                wr.wr.rdma = rdma_t::from(remote);
                 fill_opcode_with_imm(
                     &mut wr,
                     &imm,
@@ -147,7 +140,7 @@ impl<'a> SendWr<'a> {
 pub struct RecvWr<'a>(WrBase<'a>);
 
 impl<'a> RecvWr<'a> {
-    pub fn new(local: &'a [MrSlice<'a>], wr_id: u64, signal: bool) -> Self {
+    pub fn new<'ms>(local: &'ms [MrSlice<'a>], wr_id: u64, signal: bool) -> Self {
         Self(WrBase {
             local: build_sgl(local),
             wr_id,
@@ -158,16 +151,7 @@ impl<'a> RecvWr<'a> {
 
     /// Translate the `RecvWr` into a `ibv_recv_wr` that can be passed to
     /// `ibv_post_recv`.
-    ///
-    /// # Safety
-    ///
-    /// The resulted `ibv_recv_wr` is a foreign type and has no connection with
-    /// the original `RecvWr`, which holds the scatter-gather list. The compiler
-    /// therefore cannot enforce that the `RecvWr` outlives the return value.
-    ///
-    /// The caller must ensure that the `RecvWr` is not dropped before the
-    /// return value is posted to the RDMA device.
-    pub unsafe fn to_wr(&self) -> ibv_recv_wr {
+    pub fn to_wr(&self) -> ibv_recv_wr {
         ibv_recv_wr {
             wr_id: self.0.wr_id,
             sg_list: self.0.local.as_ptr() as *mut _,

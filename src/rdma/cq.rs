@@ -8,9 +8,6 @@ use rdma_sys::*;
 use thiserror::Error;
 
 /// Opcode of a completion queue entry.
-///
-/// The documentation and error messages are heavily borrowed from [RDMAmojo](https://www.rdmamojo.com/2013/02/15/ibv_poll_cq/).
-/// My biggest thanks to the author, Dotan Barak.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CqeOpcode {
     /// Send request.
@@ -48,17 +45,20 @@ impl From<u32> for CqeOpcode {
 }
 
 /// Status of a completion queue entry.
+///
+/// The documentation and error messages are heavily borrowed from [RDMAmojo](https://www.rdmamojo.com/2013/02/15/ibv_poll_cq/).
+/// My biggest thanks to the author, Dotan Barak.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 #[repr(u32)]
 pub enum CqeStatus {
-    /// **Operation completed successfully**: this means that the corresponding
+    /// **Operation completed successfully:** this means that the corresponding
     /// Work Request (and all of the unsignaled Work Requests that were posted
     /// previous to it) ended and the memory buffers that this Work Request
     /// refers to are ready to be (re)used.
     #[error("success")]
     Success = ibv_wc_status::IBV_WC_SUCCESS as _,
 
-    /// **Local Length Error**: this happens if a Work Request that was posted
+    /// **Local Length Error:** this happens if a Work Request that was posted
     /// in a local Send Queue contains a message that is greater than the maximum
     /// message size that is supported by the RDMA device port that should send
     /// the message or an Atomic operation which its size is different than 8
@@ -69,7 +69,7 @@ pub enum CqeStatus {
     #[error("local length error")]
     LocLenErr = ibv_wc_status::IBV_WC_LOC_LEN_ERR as _,
 
-    /// **Local QP Operation Error**: an internal QP consistency error was
+    /// **Local QP Operation Error:** an internal QP consistency error was
     /// detected while processing this Work Request: this happens if a Work
     /// Request that was posted in a local Send Queue of a UD QP contains an
     /// Address Handle that is associated with a Protection Domain to a QP which
@@ -79,41 +79,41 @@ pub enum CqeStatus {
     #[error("local QP operation error")]
     LocQpOpErr = ibv_wc_status::IBV_WC_LOC_QP_OP_ERR as _,
 
-    /// **Local EE Context Operation Error**: an internal EE Context
+    /// **Local EE Context Operation Error:** an internal EE Context
     /// consistency error was detected while processing this Work Request
     /// (**unused**, since it is relevant only to RD QPs or EE Context, which
     /// aren’t supported).
     #[error("local EE context operation error")]
     LocEecOpErr = ibv_wc_status::IBV_WC_LOC_EEC_OP_ERR as _,
 
-    /// **Local Protection Error**: the locally posted Work Request’s buffers
+    /// **Local Protection Error:** the locally posted Work Request’s buffers
     /// in the scatter/gather list does not reference a Memory Region that is
     /// valid for the requested operation.
     #[error("local protection error")]
     LocProtErr = ibv_wc_status::IBV_WC_LOC_PROT_ERR as _,
 
-    /// **Work Request Flushed Error**: a Work Request was in process or
+    /// **Work Request Flushed Error:** a Work Request was in process or
     /// outstanding when the QP transitioned into the Error State.
     #[error("WR flush error")]
     WrFlushErr = ibv_wc_status::IBV_WC_WR_FLUSH_ERR as _,
 
-    /// **Memory Window Binding Error**: a failure happened when trying to bind
+    /// **Memory Window Binding Error:** a failure happened when trying to bind
     /// a memory window to a MR.
     #[error("memory window bind error")]
     MwBindErr = ibv_wc_status::IBV_WC_MW_BIND_ERR as _,
 
-    /// **Bad Response Error**: an unexpected transport layer opcode was returned
+    /// **Bad Response Error:** an unexpected transport layer opcode was returned
     /// by the responder. *Relevant for RC QPs.*
     #[error("bad response error")]
     BadRespErr = ibv_wc_status::IBV_WC_BAD_RESP_ERR as _,
 
-    /// **Local Access Error**: a protection error occurred on a local data buffer
+    /// **Local Access Error:** a protection error occurred on a local data buffer
     /// during the processing of a RDMA Write with Immediate operation sent from
     /// the remote node. *Relevant for RC QPs.*
     #[error("local access error")]
     LocAccessErr = ibv_wc_status::IBV_WC_LOC_ACCESS_ERR as _,
 
-    /// **Remote Invalid Request Error**: the responder detected an invalid message
+    /// **Remote Invalid Request Error:** the responder detected an invalid message
     /// on the channel. Possible causes include the operation is not supported by
     /// this receive queue (qp_access_flags in remote QP wasn't configured to
     /// support this operation), insufficient buffering to receive a new RDMA or
@@ -122,21 +122,21 @@ pub enum CqeStatus {
     #[error("remote invalid request error")]
     RemInvReqErr = ibv_wc_status::IBV_WC_REM_INV_REQ_ERR as _,
 
-    /// **Remote Access Error**: a protection error occurred on a remote data
+    /// **Remote Access Error:** a protection error occurred on a remote data
     /// buffer to be read by an RDMA Read, written by an RDMA Write or accessed
     /// by an atomic operation. This error is reported only on RDMA operations
     /// or atomic operations. *Relevant for RC QPs.*
     #[error("remote access error")]
     RemAccessErr = ibv_wc_status::IBV_WC_REM_ACCESS_ERR as _,
 
-    /// **Remote Operation Error**: the operation could not be completed
+    /// **Remote Operation Error:** the operation could not be completed
     /// successfully by the responder. Possible causes include a responder QP
     /// related error that prevented the responder from completing the request
     /// or a malformed WQE on the Receive Queue. *Relevant for RC QPs.*
     #[error("remote operation error")]
     RemOpErr = ibv_wc_status::IBV_WC_REM_OP_ERR as _,
 
-    /// **Transport Retry Counter Exceeded**: the local transport timeout retry
+    /// **Transport Retry Counter Exceeded:** the local transport timeout retry
     /// counter was exceeded while trying to send this message. This means that
     /// the remote side didn't send any Ack or Nack.
     /// - If this happens when sending the first message, usually this mean that
@@ -149,62 +149,62 @@ pub enum CqeStatus {
     #[error("transport retry counter exceeded")]
     RetryExcErr = ibv_wc_status::IBV_WC_RETRY_EXC_ERR as _,
 
-    /// **RNR Retry Counter Exceeded**: the RNR NAK retry count was exceeded.
+    /// **RNR Retry Counter Exceeded:** the RNR NAK retry count was exceeded.
     /// This usually means that the remote side didn't post any WR to its Receive
     /// Queue. *Relevant for RC QPs.*
     #[error("RNR retry counter exceeded")]
     RnrRetryExcErr = ibv_wc_status::IBV_WC_RNR_RETRY_EXC_ERR as _,
 
-    /// **Local RDD Violation Error**: the RDD associated with the QP does not
+    /// **Local RDD Violation Error:** the RDD associated with the QP does not
     /// match the RDD associated with the EE Context (**unused**, since it is
     /// relevant only to RD QPs or EE Context, which aren't supported).
     #[error("local RDD violation error")]
     LocRddViolErr = ibv_wc_status::IBV_WC_LOC_RDD_VIOL_ERR as _,
 
-    /// **Remote Invalid RD Request Error**: the responder detected an invalid
+    /// **Remote Invalid RD Request Error:** the responder detected an invalid
     /// incoming RD message. Causes include a Q_Key or RDD violation (**unused**,
     /// since it is relevant only to RD QPs or EE Context, which aren't supported).
     #[error("remote invalid RD request")]
     RemInvRdReqErr = ibv_wc_status::IBV_WC_REM_INV_RD_REQ_ERR as _,
 
-    /// **Remote Aborted Error**: for UD or UC QPs associated with a SRQ, the
+    /// **Remote Aborted Error:** for UD or UC QPs associated with a SRQ, the
     /// responder aborted the operation.
     #[error("remote aborted error")]
     RemAbortErr = ibv_wc_status::IBV_WC_REM_ABORT_ERR as _,
 
-    /// **Invalid EE Context Number**: an invalid EE Context number was detected
+    /// **Invalid EE Context Number:** an invalid EE Context number was detected
     /// (**unused**, since it is relevant only to RD QPs or EE Context, which
     /// aren't supported).
     #[error("invalid EE context number")]
     InvEecnErr = ibv_wc_status::IBV_WC_INV_EECN_ERR as _,
 
-    /// **Invalid EE Context State Error**: operation is not legal for the
+    /// **Invalid EE Context State Error:** operation is not legal for the
     /// specified EE Context state (**unused**, since it is relevant only to RD
     /// QPs or EE Context, which aren't supported).
     #[error("invalid EE context state error")]
     InvEecStateErr = ibv_wc_status::IBV_WC_INV_EEC_STATE_ERR as _,
 
-    /// **Fatal error**.
+    /// **Fatal error:** a fatal error that may not be recoverable.
     #[error("fatal error")]
     FatalErr = ibv_wc_status::IBV_WC_FATAL_ERR as _,
 
-    /// **Response Timeout Error**.
+    /// **Response Timeout Error:** a response timed out.
     #[error("response timeout error")]
     RespTimeoutErr = ibv_wc_status::IBV_WC_RESP_TIMEOUT_ERR as _,
 
-    /// **Tag Matching Error**: a failure occurred when trying to issue an
+    /// **Tag Matching Error:** a failure occurred when trying to issue an
     /// `ibv_post_srq_ops` with opcode `IBV_WR_TAG_DEL` to remove a previously
     /// added tag entry, due to concurrent tag consumption.
     #[error("tag matching error")]
     TmErr = ibv_wc_status::IBV_WC_TM_ERR as _,
 
-    /// **Rendezvous Request Tagged Buffer Insufficient**: this is due to
+    /// **Rendezvous Request Tagged Buffer Insufficient:** this is due to
     /// a posted tagged buffer is insufficient to hold the data of a
     /// rendezvous request.
     #[error("rendezvous request tagged buffer insufficient")]
     TmRndvIncomplete = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE as _,
 
-    /// **General Error**: other error which isn't one of the above errors.
+    /// **General Error:** other error which isn't one of the above errors.
     #[error("general error")]
     GeneralErr = ibv_wc_status::IBV_WC_GENERAL_ERR as _,
 }
@@ -222,12 +222,14 @@ impl From<u32> for CqeStatus {
 ///
 /// This structure transparently wraps an `ibv_wc` structure and thus represents an entry in the completion queue.
 ///
-/// Work completions are [trivially copyable](https://en.cppreference.com/w/cpp/named_req/TriviallyCopyable).
-/// Therefore, this structure is `Send` and `Sync`, and can be safely cloned.
 #[repr(transparent)]
 pub struct Wc(ibv_wc);
 
+/// Work completions are [trivially copyable](https://en.cppreference.com/w/cpp/named_req/TriviallyCopyable)
+/// and is thus safe to send to another thread.
 unsafe impl Send for Wc {}
+/// Work completions are [trivially copyable](https://en.cppreference.com/w/cpp/named_req/TriviallyCopyable)
+/// and is thus safe to share between threads.
 unsafe impl Sync for Wc {}
 
 impl Wc {
@@ -352,7 +354,7 @@ impl<'a> Cq<'a> {
     }
 
     /// Get the device context of the completion queue.
-    pub fn ctx(&self) -> &Context {
+    pub fn context(&self) -> &Context {
         self.ctx
     }
 
@@ -374,9 +376,7 @@ impl<'a> Cq<'a> {
         }
     }
 
-    /// Blocking poll.
-    ///
-    /// Block until `wc.len()` work completions are polled.
+    /// Blocking poll until `wc.len()` work completions are polled.
     ///
     /// **NOTE:** The validity of work completions beyond the number of polled work completions is not guaranteed.
     /// For valid completions, it is not guaranteed that they are all success.
