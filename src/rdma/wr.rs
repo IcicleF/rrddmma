@@ -47,11 +47,11 @@ pub enum SendWrDetails<'a> {
 /// queue pair at once (which can reduce doorbell ringing overheads).
 pub struct SendWr<'a>(WrBase<'a>, SendWrDetails<'a>);
 
-impl<'a, 'ms> SendWr<'a> {
+impl<'a> SendWr<'a> {
     /// Create a new send work request with basic parameters and the details
     /// that specifies its concrete type.
     pub fn new(
-        local: &'ms [MrSlice<'a>],
+        local: &[MrSlice<'a>],
         wr_id: u64,
         signal: bool,
         additions: SendWrDetails<'a>,
@@ -140,7 +140,7 @@ impl<'a, 'ms> SendWr<'a> {
 pub struct RecvWr<'a>(WrBase<'a>);
 
 impl<'a> RecvWr<'a> {
-    pub fn new<'ms>(local: &'ms [MrSlice<'a>], wr_id: u64, signal: bool) -> Self {
+    pub fn new(local: &[MrSlice<'a>], wr_id: u64, signal: bool) -> Self {
         Self(WrBase {
             local: build_sgl(local),
             wr_id,
