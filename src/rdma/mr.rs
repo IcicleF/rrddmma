@@ -31,7 +31,8 @@ impl Drop for MrInner {
 
 /// Local memory region.
 ///
-/// A memory region is a contiguous region of memory that is registered with the RDMA device.
+/// A memory region is a virtual memory space registered to the RDMA device.
+/// The registered memory itself does not belong to this type.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Mr {

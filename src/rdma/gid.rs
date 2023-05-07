@@ -4,8 +4,8 @@ use std::net::Ipv6Addr;
 pub use rdma_sys::ibv_gid;
 use serde::{Deserialize, Serialize};
 
-/// An 128-bit identifier used to identify a port on a network adapter, a port on a router,
-/// or a multicast group.
+/// An 128-bit identifier used to identify a port on a network adapter, a port
+/// on a router, or a multicast group.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Gid(ibv_gid);

@@ -339,14 +339,9 @@ impl Drop for CqInner {
 
 /// Completion queue.
 ///
-/// This structure owns a completion queue (`ibv_cq`) and holds an `Arc` to the device context of the queue.
-/// It is responsible of destroying the completion queue when dropped.
-///
-/// The underlying device context must live longer than the completion queue.
-///
-/// Because the inner `ibv_cq` is owned by this structure, `Cq` is `!Send` and cannot be cloned.
-/// However, although `Cq` is `Sync` because thread-safety is guaranteed by the ibverbs userspace driver, it is
-/// still unrecommended to use the same `Cq` in multiple threads for performance reasons.
+/// This structure owns a completion queue (`ibv_cq`) and holds a reference
+/// to the device context of the queue to ensure the context will not get
+/// dropped too early.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Cq {
