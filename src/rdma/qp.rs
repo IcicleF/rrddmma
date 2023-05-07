@@ -510,7 +510,13 @@ impl<'a> Qp<'a> {
         }
     }
 
-    pub fn send(&self, local: &[MrSlice<'_>], wr_id: u64, signal: bool) -> Result<()> {
+    pub fn send(
+        &self,
+        local: &[MrSlice<'_>],
+        wr_id: u64,
+        signal: bool,
+        inline: bool,
+    ) -> Result<()> {
         let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
@@ -523,11 +529,8 @@ impl<'a> Qp<'a> {
             },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_SEND,
-            send_flags: if signal {
-                ibv_send_flags::IBV_SEND_SIGNALED.0
-            } else {
-                0
-            },
+            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
+                | inline.select(ibv_send_flags::IBV_SEND_INLINE.0, 0),
             ..wr
         };
         let ret = unsafe {
@@ -547,6 +550,7 @@ impl<'a> Qp<'a> {
         local: &[MrSlice<'_>],
         wr_id: u64,
         signal: bool,
+        inline: bool,
     ) -> Result<()> {
         let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
@@ -560,11 +564,8 @@ impl<'a> Qp<'a> {
             },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_SEND,
-            send_flags: if signal {
-                ibv_send_flags::IBV_SEND_SIGNALED.0
-            } else {
-                0
-            },
+            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
+                | inline.select(ibv_send_flags::IBV_SEND_INLINE.0, 0),
             ..wr
         };
         wr.wr.ud = ud_t::from(peer);
@@ -598,11 +599,7 @@ impl<'a> Qp<'a> {
             },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_RDMA_READ,
-            send_flags: if signal {
-                ibv_send_flags::IBV_SEND_SIGNALED.0
-            } else {
-                0
-            },
+            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             wr: wr_t {
                 rdma: rdma_t::from(remote),
             },
@@ -643,11 +640,7 @@ impl<'a> Qp<'a> {
             } else {
                 ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM
             },
-            send_flags: if signal {
-                ibv_send_flags::IBV_SEND_SIGNALED.0
-            } else {
-                0
-            },
+            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
                 imm_data: imm.unwrap_or(0),
             },
@@ -728,4 +721,21 @@ pub(crate) fn build_sgl<'a>(slices: &'a [MrSlice<'a>]) -> Vec<ibv_sge> {
             lkey: slice.mr().lkey(),
         })
         .collect()
+}
+
+// Carbon language is good at expressing this kind of thing :)
+// so let's just borrow this from it!
+trait Select {
+    fn select<T>(self, a: T, b: T) -> T;
+}
+
+impl Select for bool {
+    #[inline]
+    fn select<T>(self, a: T, b: T) -> T {
+        if self {
+            a
+        } else {
+            b
+        }
+    }
 }
