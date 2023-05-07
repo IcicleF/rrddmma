@@ -3,9 +3,7 @@ use rrddmma::ctrl::Connecter;
 use std::collections::HashMap;
 
 fn main() -> anyhow::Result<()> {
-    let cluster = rrddmma::ctrl::Cluster::load_toml(
-        "/home/gaoj/workspace/rust/project-nos/rrddmma/examples/lab.toml",
-    )?;
+    let cluster = rrddmma::ctrl::Cluster::load_toml("examples/lab.toml")?;
     println!("This is node {}", cluster.rank());
 
     // Basic context & pd
