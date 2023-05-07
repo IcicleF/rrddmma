@@ -216,7 +216,7 @@ impl<'a> MrSlice<'a> {
     }
 }
 
-/// Remote memory region data.
+/// Remote memory region.
 ///
 /// This structure contains remote memory region information and does not hold any resources locally.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]

@@ -9,7 +9,7 @@ pub struct Barrier;
 
 impl Barrier {
     pub fn wait_on_port(cluster: &Cluster, port: u16) {
-        if cluster.myself() == 0 {
+        if cluster.rank() == 0 {
             let inaddr_any = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
             let listener = TcpListener::bind(inaddr_any).unwrap();
 

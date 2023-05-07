@@ -28,11 +28,12 @@ struct WrBase<'a> {
 ///
 /// this type holds the remaining parameters for each type of send work request.
 pub enum SendWrDetails<'a> {
-    /// Send requires an optional immediate.
-    Send(Option<u32>),
+    /// Send requires specifying an optional immediate and whether to inline.
+    Send(Option<u32>, bool),
 
-    /// Send via UD QPs requires specifying the target and an optional immediate.
-    SendTo(QpPeer, Option<u32>),
+    /// Send via UD QPs requires specifying the target, an optional immediate,
+    /// and whether to inline.
+    SendTo(QpPeer, Option<u32>, bool),
 
     /// Read requires a remote memory area to read from.
     Read(RemoteMrSlice<'a>),
@@ -97,13 +98,18 @@ impl<'a> SendWr<'a> {
             }
         }
         match &self.1 {
-            SendWrDetails::Send(imm) => fill_opcode_with_imm(
-                &mut wr,
-                &imm,
-                ibv_wr_opcode::IBV_WR_SEND,
-                ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
-            ),
-            SendWrDetails::SendTo(peer, imm) => {
+            SendWrDetails::Send(imm, inl) => {
+                fill_opcode_with_imm(
+                    &mut wr,
+                    &imm,
+                    ibv_wr_opcode::IBV_WR_SEND,
+                    ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
+                );
+                if *inl {
+                    wr.send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
+                }
+            }
+            SendWrDetails::SendTo(peer, imm, inl) => {
                 wr.wr.ud = ud_t::from(peer);
                 fill_opcode_with_imm(
                     &mut wr,
@@ -111,6 +117,9 @@ impl<'a> SendWr<'a> {
                     ibv_wr_opcode::IBV_WR_SEND,
                     ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
                 );
+                if *inl {
+                    wr.send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
+                }
             }
             SendWrDetails::Read(remote) => {
                 wr.wr.rdma = rdma_t::from(remote);

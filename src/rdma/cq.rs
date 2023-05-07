@@ -11,34 +11,34 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CqeOpcode {
     /// Send request.
-    Send = 0,
+    Send = ibv_wc_opcode::IBV_WC_SEND as _,
     /// RDMA write request.
-    RdmaWrite = 1,
+    RdmaWrite = ibv_wc_opcode::IBV_WC_RDMA_WRITE as _,
     /// RDMA read request.
-    RdmaRead = 2,
+    RdmaRead = ibv_wc_opcode::IBV_WC_RDMA_READ as _,
     /// RDMA compare-and-swap request.
-    CompSwap = 3,
+    CompSwap = ibv_wc_opcode::IBV_WC_COMP_SWAP as _,
     /// RDMA fetch-and-add request.
-    FetchAdd = 4,
+    FetchAdd = ibv_wc_opcode::IBV_WC_FETCH_ADD as _,
     /// Memory window bind request.
-    BindMw = 5,
+    BindMw = ibv_wc_opcode::IBV_WC_BIND_MW as _,
     /// Receive request.
-    Recv = 128,
+    Recv = ibv_wc_opcode::IBV_WC_RECV as _,
     /// Receive request with immediate data.
-    RecvRdmaImm = 129,
+    RecvRdmaImm = ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM as _,
 }
 
 impl From<u32> for CqeOpcode {
     fn from(n: u32) -> Self {
         match n {
-            0 => CqeOpcode::Send,
-            1 => CqeOpcode::RdmaWrite,
-            2 => CqeOpcode::RdmaRead,
-            3 => CqeOpcode::CompSwap,
-            4 => CqeOpcode::FetchAdd,
-            5 => CqeOpcode::BindMw,
-            128 => CqeOpcode::Recv,
-            129 => CqeOpcode::RecvRdmaImm,
+            ibv_wc_opcode::IBV_WC_SEND => CqeOpcode::Send,
+            ibv_wc_opcode::IBV_WC_RDMA_WRITE => CqeOpcode::RdmaWrite,
+            ibv_wc_opcode::IBV_WC_RDMA_READ => CqeOpcode::RdmaRead,
+            ibv_wc_opcode::IBV_WC_COMP_SWAP => CqeOpcode::CompSwap,
+            ibv_wc_opcode::IBV_WC_FETCH_ADD => CqeOpcode::FetchAdd,
+            ibv_wc_opcode::IBV_WC_BIND_MW => CqeOpcode::BindMw,
+            ibv_wc_opcode::IBV_WC_RECV => CqeOpcode::Recv,
+            ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM => CqeOpcode::RecvRdmaImm,
             _ => panic!("invalid opcode: {}", n),
         }
     }

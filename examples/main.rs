@@ -5,7 +5,7 @@ use std::collections::HashMap;
 fn main() -> anyhow::Result<()> {
     let cluster =
         rrddmma::ctrl::Cluster::load_toml("/home/gaoj/workspace/rust/rrddmma/examples/lab.toml")?;
-    println!("This is node {}", cluster.myself());
+    println!("This is node {}", cluster.rank());
 
     // Basic context & pd
     let context = rrddmma::Context::open(Some("mlx5_0"), 1, 0)?;
@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
     let buf = vec![0u8; 4096];
     let mr = rrddmma::Mr::reg_slice(&pd, &buf)?;
 
-    if cluster.myself() == 0 {
+    if cluster.rank() == 0 {
         let rem_mr = Connecter::new(&cluster, 1).recv_mr()?;
         println!("received remote mr");
 
@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
             println!("write 8B latency: {:?}", end_time - start_time);
         }
     }
-    if cluster.myself() == 1 {
+    if cluster.rank() == 1 {
         Connecter::new(&cluster, 0).send_mr(&mr)?;
         println!("sent mr to remote");
     }

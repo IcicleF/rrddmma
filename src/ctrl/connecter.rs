@@ -44,7 +44,7 @@ impl<'a> Connecter<'a> {
             };
         }
 
-        let id = cluster.myself();
+        let id = cluster.rank();
         assert_ne!(id, with);
 
         let stream = if id < with {
@@ -81,7 +81,7 @@ impl<'a> Connecter<'a> {
         let ep = serde_json::to_string(&ep)?;
 
         let mut stream = self.stream.as_ref().unwrap();
-        let ep = if self.cluster.myself() < self.with {
+        let ep = if self.cluster.rank() < self.with {
             // First receive
             let buf = stream_read(&mut stream)?;
             let peer = serde_json::from_slice::<QpEndpoint>(buf.as_slice())?;
@@ -109,7 +109,7 @@ impl<'a> Connecter<'a> {
         let ep = serde_json::to_string(&ep)?;
 
         let mut stream = self.stream.as_ref().unwrap();
-        let eps = if self.cluster.myself() < self.with {
+        let eps = if self.cluster.rank() < self.with {
             // First receive
             let buf = stream_read(&mut stream)?;
             let peer = serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?;

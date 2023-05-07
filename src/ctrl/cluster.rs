@@ -35,6 +35,7 @@ impl Cluster {
         Self::new_withid(peers, id)
     }
 
+    /// Load cluster configuration from a TOML file.
     pub fn load_toml(path: impl AsRef<Path>) -> Result<Self> {
         let mut file = std::fs::File::open(path)?;
         let mut toml_str = String::new();
@@ -55,6 +56,25 @@ impl Cluster {
         Ok(Self::new(peers))
     }
 
+    /// Load cluster configuration from a CloudLab XML file.
+    ///
+    /// The CloudLab XML file is expected to contain a virtual network configuration
+    /// that specifies an IPv4 address for each node. The IPv4 address will appear
+    /// in each node's configuration in the following form:
+    ///
+    /// ```xml
+    /// <rspec ...>
+    ///     <!-- ... -->
+    ///     <node xmlns="..." client_id="...">
+    ///         <interface xmlns="..." client_id="...">
+    ///             <ip xmlns="..." address="10.0.0.1" type="ipv4"/>
+    ///        </interface>
+    ///     </node>
+    /// </rspec>
+    /// ```
+    ///
+    /// This function extracts the `address` attribute of such `ip` elements in each `node`
+    /// and combines them together to get a configuration.
     pub fn load_cloudlab_xml(config_file: &str) -> Result<Self> {
         use quick_xml::events::Event;
         use quick_xml::reader::Reader;
@@ -97,26 +117,47 @@ impl Cluster {
         Ok(Self::new(peers))
     }
 
+    /// Get the IP addresses of all nodes in the cluster.
     #[inline]
     pub fn peers(&self) -> &Vec<Ipv4Addr> {
         &self.peers
     }
 
+    /// Get the rank of this node in the cluster.
     #[inline]
-    pub fn myself(&self) -> usize {
+    pub fn rank(&self) -> usize {
         self.id
     }
 
+    /// Get the number of participants in the cluster.
     #[inline]
     pub fn size(&self) -> usize {
         self.peers.len()
     }
 
+    /// Get the IP address of the node with the specified rank.
     #[inline]
     pub fn get(&self, id: usize) -> Option<Ipv4Addr> {
         self.peers.get(id).cloned()
     }
 
+    /// Establish connections with all nodes in the cluster.
+    /// Return an iterator that yields a `Vec` of `Qp`s and `QpPeer`s for
+    /// each node. The `Vec`'s size is specified by `num_link`.
+    ///
+    /// The order of connection to different nodes is *determinate* but not
+    /// in ascending order. Specifically, the iteration can be divided into
+    /// `N` steps, where `N` is the cluster size `n` rounded up to a power of 2.
+    /// In step `i`, the participant with rank `x` connects with an opponent
+    /// with rank `x ^ i`. This ensures that in each phase, pariticipants
+    /// form pairs and connect with each other. If such an opponent does not
+    /// exist, the iterator will block until all other pariticipants also
+    /// finished this step and move to the next step. In other words, the
+    /// iterator will only yield value for `n - 1` times.
+    ///
+    /// **NOTE:** alll pariticipants are expected to call this function and
+    /// iterate forwards concurrently. They will synchronize with each other
+    /// using `Barrier`.
     #[inline]
     pub fn connect_all<'a, 'b: 'a>(
         &'a self,
@@ -160,7 +201,7 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
                 return None;
             }
 
-            let id = this.cluster.myself();
+            let id = this.cluster.rank();
             let peer_id = this.i ^ id;
             this.i += 1;
             Some(peer_id)
