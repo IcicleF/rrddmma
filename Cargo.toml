@@ -3,7 +3,7 @@ name = "rrddmma"
 version = "0.4.1"
 edition = "2021"
 
-authors = ["Jian Gao <icicle.flw@gmail.com>"]
+authors = ["Jian Gao <i@icyf.me>"]
 description = "A Rust library for RDMA."
 license = "MIT"
 
