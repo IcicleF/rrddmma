@@ -3,6 +3,10 @@ name = "rrddmma"
 version = "0.4.1"
 edition = "2021"
 
+authors = ["Jian Gao <icicle.flw@gmail.com>"]
+description = "A Rust library for RDMA."
+license = "MIT"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
