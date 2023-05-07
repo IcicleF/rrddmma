@@ -3,13 +3,14 @@ use rrddmma::ctrl::Connecter;
 use std::collections::HashMap;
 
 fn main() -> anyhow::Result<()> {
-    let cluster =
-        rrddmma::ctrl::Cluster::load_toml("/home/gaoj/workspace/rust/rrddmma/examples/lab.toml")?;
+    let cluster = rrddmma::ctrl::Cluster::load_toml(
+        "/home/gaoj/workspace/rust/project-nos/rrddmma/examples/lab.toml",
+    )?;
     println!("This is node {}", cluster.rank());
 
     // Basic context & pd
     let context = rrddmma::Context::open(Some("mlx5_0"), 1, 0)?;
-    let pd = rrddmma::Pd::new(&context)?;
+    let pd = rrddmma::Pd::new(context.clone())?;
 
     rrddmma::ctrl::Barrier::wait(&cluster);
     let mut conns = HashMap::new();
@@ -19,7 +20,7 @@ fn main() -> anyhow::Result<()> {
     println!("connected ({})", conns.len());
 
     let buf = vec![0u8; 4096];
-    let mr = rrddmma::Mr::reg_slice(&pd, &buf)?;
+    let mr = rrddmma::Mr::reg_slice(pd.clone(), &buf)?;
 
     if cluster.rank() == 0 {
         let rem_mr = Connecter::new(&cluster, 1).recv_mr()?;

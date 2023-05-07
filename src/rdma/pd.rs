@@ -1,46 +1,54 @@
 use std::io;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use super::context::Context;
 
 use anyhow;
 use rdma_sys::*;
 
-/// Protection domain.
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct Pd<'a> {
-    ctx: &'a Context,
+struct PdInner {
+    ctx: Context,
     pd: NonNull<ibv_pd>,
 }
 
-unsafe impl<'a> Sync for Pd<'a> {}
+unsafe impl Send for PdInner {}
+unsafe impl Sync for PdInner {}
 
-impl<'a> Pd<'a> {
+impl Drop for PdInner {
+    fn drop(&mut self) {
+        unsafe { ibv_dealloc_pd(self.pd.as_ptr()) };
+    }
+}
+
+/// Protection domain.
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+pub struct Pd {
+    inner: Arc<PdInner>,
+}
+
+impl Pd {
     /// Allocate a protection domain for the given RDMA device context.
-    pub fn new(ctx: &'a Context) -> anyhow::Result<Self> {
+    pub fn new(ctx: Context) -> anyhow::Result<Self> {
         let pd = NonNull::new(unsafe { ibv_alloc_pd(ctx.as_ptr()) })
             .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
 
-        Ok(Self { ctx, pd })
+        Ok(Self {
+            inner: Arc::new(PdInner { ctx, pd }),
+        })
     }
 
     /// Get the underlying `ibv_pd` structure.
     pub fn as_ptr(&self) -> *mut ibv_pd {
-        self.pd.as_ptr()
+        self.inner.pd.as_ptr()
     }
 
-    /// Get a reference to the underlying `Context`.
-    pub fn context(&self) -> &Context {
-        self.ctx
-    }
-}
-
-/// Deallocates the protection domain when dropped.
-/// `mem::forget`-ting this structure will result in a resource leakage.
-impl<'a> Drop for Pd<'a> {
-    fn drop(&mut self) {
-        unsafe { ibv_dealloc_pd(self.as_ptr()) };
+    /// Get the underlying `Context`.
+    pub fn context(&self) -> Context {
+        self.inner.ctx.clone()
     }
 }
 

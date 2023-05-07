@@ -163,25 +163,19 @@ impl QpCaps {
 
 /// Queue pair initialization attributes.
 #[derive(Debug, Clone)]
-pub struct QpInitAttr<'a> {
-    pub send_cq: Arc<Cq<'a>>,
-    pub recv_cq: Arc<Cq<'a>>,
+pub struct QpInitAttr {
+    pub send_cq: Cq,
+    pub recv_cq: Cq,
     pub cap: QpCaps,
     pub qp_type: QpType,
     pub sq_sig_all: bool,
 }
 
-impl<'a> QpInitAttr<'a> {
-    pub fn new(
-        send_cq: Arc<Cq<'a>>,
-        recv_cq: Arc<Cq<'a>>,
-        cap: QpCaps,
-        qp_type: QpType,
-        sq_sig_all: bool,
-    ) -> Self {
+impl QpInitAttr {
+    pub fn new(send_cq: &Cq, recv_cq: &Cq, cap: QpCaps, qp_type: QpType, sq_sig_all: bool) -> Self {
         QpInitAttr {
-            send_cq,
-            recv_cq,
+            send_cq: send_cq.clone(),
+            recv_cq: recv_cq.clone(),
             cap,
             qp_type,
             sq_sig_all,
@@ -189,8 +183,8 @@ impl<'a> QpInitAttr<'a> {
     }
 }
 
-impl<'a> From<QpInitAttr<'a>> for ibv_qp_init_attr {
-    fn from(value: QpInitAttr<'a>) -> Self {
+impl From<QpInitAttr> for ibv_qp_init_attr {
+    fn from(value: QpInitAttr) -> Self {
         ibv_qp_init_attr {
             qp_context: ptr::null_mut(),
             send_cq: value.send_cq.as_ptr(),
@@ -242,7 +236,7 @@ pub struct QpPeer {
 unsafe impl Sync for QpPeer {}
 
 impl QpPeer {
-    pub fn new(pd: &Pd, ep: QpEndpoint) -> Result<Self> {
+    pub fn new(pd: Pd, ep: QpEndpoint) -> Result<Self> {
         let mut ah_attr = ibv_ah_attr {
             grh: ibv_global_route {
                 dgid: ibv_gid::from(ep.gid),
@@ -280,17 +274,31 @@ impl Drop for QpPeer {
     }
 }
 
-/// Queue pair.
-pub struct Qp<'a> {
-    pd: &'a Pd<'a>,
+#[derive(Debug)]
+struct QpInner {
+    pd: Pd,
     qp: NonNull<ibv_qp>,
-    init_attr: QpInitAttr<'a>,
+    init_attr: QpInitAttr,
 }
 
-unsafe impl<'a> Sync for Qp<'a> {}
+unsafe impl Send for QpInner {}
+unsafe impl Sync for QpInner {}
 
-impl<'a> From<&Qp<'a>> for QpEndpoint {
-    fn from(qp: &Qp<'a>) -> Self {
+impl Drop for QpInner {
+    fn drop(&mut self) {
+        unsafe { ibv_destroy_qp(self.qp.as_ptr()) };
+    }
+}
+
+/// Queue pair.
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+pub struct Qp {
+    inner: Arc<QpInner>,
+}
+
+impl<'a> From<&Qp> for QpEndpoint {
+    fn from(qp: &Qp) -> Self {
         const GLOBAL_QKEY: u32 = 0x11111111;
         QpEndpoint {
             gid: qp.pd().context().gid(),
@@ -303,32 +311,30 @@ impl<'a> From<&Qp<'a>> for QpEndpoint {
     }
 }
 
-impl<'a> Qp<'a> {
-    pub fn new(pd: &'a Pd, attr: QpInitAttr<'a>) -> Result<Self> {
+impl Qp {
+    pub fn new(pd: Pd, init_attr: QpInitAttr) -> Result<Self> {
         let qp = NonNull::new(unsafe {
-            ibv_create_qp(pd.as_ptr(), &mut ibv_qp_init_attr::from(attr.clone()))
+            ibv_create_qp(pd.as_ptr(), &mut ibv_qp_init_attr::from(init_attr.clone()))
         })
         .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
         Ok(Qp {
-            pd,
-            qp,
-            init_attr: attr,
+            inner: Arc::new(QpInner { pd, qp, init_attr }),
         })
     }
 
     #[inline]
     pub fn as_ptr(&self) -> *mut ibv_qp {
-        self.qp.as_ptr()
+        self.inner.qp.as_ptr()
     }
 
     #[inline]
-    pub fn pd(&self) -> &Pd {
-        self.pd
+    pub fn pd(&self) -> Pd {
+        self.inner.pd.clone()
     }
 
     #[inline]
     pub fn qp_type(&self) -> QpType {
-        let ty = unsafe { (*self.qp.as_ptr()).qp_type };
+        let ty = unsafe { (*self.inner.qp.as_ptr()).qp_type };
         match ty {
             ibv_qp_type::IBV_QPT_RC => QpType::RC,
             ibv_qp_type::IBV_QPT_UD => QpType::UD,
@@ -338,12 +344,12 @@ impl<'a> Qp<'a> {
 
     #[inline]
     pub(crate) fn qp_num(&self) -> u32 {
-        unsafe { (*self.qp.as_ptr()).qp_num }
+        unsafe { (*self.inner.qp.as_ptr()).qp_num }
     }
 
     #[inline]
     pub fn state(&self) -> QpState {
-        let state = unsafe { (*self.qp.as_ptr()).state };
+        let state = unsafe { (*self.inner.qp.as_ptr()).state };
         match state {
             ibv_qp_state::IBV_QPS_RESET => QpState::Reset,
             ibv_qp_state::IBV_QPS_INIT => QpState::Init,
@@ -355,23 +361,13 @@ impl<'a> Qp<'a> {
     }
 
     #[inline]
-    pub fn scq(&self) -> Arc<Cq<'a>> {
-        self.init_attr.send_cq.clone()
+    pub fn scq(&self) -> Cq {
+        self.inner.init_attr.send_cq.clone()
     }
 
     #[inline]
-    pub fn rcq(&self) -> Arc<Cq<'a>> {
-        self.init_attr.recv_cq.clone()
-    }
-
-    #[inline]
-    pub fn scq_as_ref(&self) -> &Cq<'a> {
-        &self.init_attr.send_cq
-    }
-
-    #[inline]
-    pub fn rcq_as_ref(&self) -> &Cq<'a> {
-        &self.init_attr.recv_cq
+    pub fn rcq(&self) -> Cq {
+        self.inner.init_attr.recv_cq.clone()
     }
 
     fn modify_reset_to_init(&self, ep: &QpEndpoint) -> Result<()> {
@@ -394,7 +390,7 @@ impl<'a> Qp<'a> {
             attr.qkey = ep.qkey;
         }
 
-        let ret = unsafe { ibv_modify_qp(self.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
+        let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
         if ret == 0 {
             Ok(())
         } else {
@@ -408,7 +404,7 @@ impl<'a> Qp<'a> {
         attr.qp_state = ibv_qp_state::IBV_QPS_RTR;
 
         if self.qp_type() == QpType::RC {
-            let ctx = self.pd.context();
+            let ctx = self.inner.pd.context();
 
             attr.path_mtu = ctx.active_mtu();
             attr.dest_qp_num = ep.qpn;
@@ -436,7 +432,7 @@ impl<'a> Qp<'a> {
                 | ibv_qp_attr_mask::IBV_QP_MIN_RNR_TIMER;
         }
 
-        let ret = unsafe { ibv_modify_qp(self.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
+        let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
         if ret == 0 {
             Ok(())
         } else {
@@ -462,7 +458,7 @@ impl<'a> Qp<'a> {
                 | ibv_qp_attr_mask::IBV_QP_RNR_RETRY;
         }
 
-        let ret = unsafe { ibv_modify_qp(self.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
+        let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
         if ret == 0 {
             Ok(())
         } else {
@@ -501,7 +497,7 @@ impl<'a> Qp<'a> {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_recv(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
         if ret == 0 {
             Ok(())
@@ -535,7 +531,7 @@ impl<'a> Qp<'a> {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
         if ret == 0 {
             Ok(())
@@ -571,7 +567,7 @@ impl<'a> Qp<'a> {
         wr.wr.ud = ud_t::from(peer);
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
         if ret == 0 {
             Ok(())
@@ -607,7 +603,7 @@ impl<'a> Qp<'a> {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
         if ret == 0 {
             Ok(())
@@ -651,7 +647,7 @@ impl<'a> Qp<'a> {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
         if ret == 0 {
             Ok(())
@@ -672,7 +668,7 @@ impl<'a> Qp<'a> {
 
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
+            ibv_post_send(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
         };
         if ret == 0 {
             Ok(())
@@ -693,7 +689,7 @@ impl<'a> Qp<'a> {
 
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
+            ibv_post_recv(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
         };
         if ret == 0 {
             Ok(())
@@ -703,16 +699,8 @@ impl<'a> Qp<'a> {
     }
 }
 
-impl<'a> Drop for Qp<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            ibv_destroy_qp(self.qp.as_ptr());
-        }
-    }
-}
-
 #[inline]
-pub(crate) fn build_sgl<'a>(slices: &'a [MrSlice<'a>]) -> Vec<ibv_sge> {
+pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
     slices
         .iter()
         .map(|slice| ibv_sge {

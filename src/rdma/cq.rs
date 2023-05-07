@@ -1,4 +1,5 @@
 use std::ptr::NonNull;
+use std::sync::Arc;
 use std::{fmt, io, mem, ptr};
 
 use super::context::Context;
@@ -313,9 +314,32 @@ impl Clone for Wc {
     }
 }
 
+struct CqInner {
+    ctx: Context,
+    cq: NonNull<ibv_cq>,
+}
+
+unsafe impl Send for CqInner {}
+unsafe impl Sync for CqInner {}
+
+impl fmt::Debug for CqInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Context")
+            .field("ctx", &self.ctx)
+            .field("cq", &self.cq)
+            .finish()
+    }
+}
+
+impl Drop for CqInner {
+    fn drop(&mut self) {
+        unsafe { ibv_destroy_cq(self.cq.as_ptr()) };
+    }
+}
+
 /// Completion queue.
 ///
-/// This structure owns a completion queue (`ibv_cq`) and holds a reference to the device context of the queue.
+/// This structure owns a completion queue (`ibv_cq`) and holds an `Arc` to the device context of the queue.
 /// It is responsible of destroying the completion queue when dropped.
 ///
 /// The underlying device context must live longer than the completion queue.
@@ -323,16 +347,14 @@ impl Clone for Wc {
 /// Because the inner `ibv_cq` is owned by this structure, `Cq` is `!Send` and cannot be cloned.
 /// However, although `Cq` is `Sync` because thread-safety is guaranteed by the ibverbs userspace driver, it is
 /// still unrecommended to use the same `Cq` in multiple threads for performance reasons.
-#[derive(Debug)]
-pub struct Cq<'a> {
-    ctx: &'a Context,
-    cq: NonNull<ibv_cq>,
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+pub struct Cq {
+    inner: Arc<CqInner>,
 }
 
-unsafe impl<'a> Sync for Cq<'a> {}
-
-impl<'a> Cq<'a> {
-    pub fn new(ctx: &'a Context, size: Option<i32>) -> Result<Self> {
+impl Cq {
+    pub fn new(ctx: Context, size: Option<i32>) -> Result<Self> {
         const DEFAULT_CQ_SIZE: i32 = 128;
         let cq = NonNull::new(unsafe {
             ibv_create_cq(
@@ -345,17 +367,19 @@ impl<'a> Cq<'a> {
         })
         .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
 
-        Ok(Self { ctx, cq })
+        Ok(Self {
+            inner: Arc::new(CqInner { ctx, cq }),
+        })
     }
 
     /// Get the underlying `ibv_cq` pointer.
     pub fn as_ptr(&self) -> *mut ibv_cq {
-        self.cq.as_ptr()
+        self.inner.cq.as_ptr()
     }
 
-    /// Get the device context of the completion queue.
-    pub fn context(&self) -> &Context {
-        self.ctx
+    /// Get the underlying `Context`.
+    pub fn context(&self) -> Context {
+        self.inner.ctx.clone()
     }
 
     /// Non-blocking poll.
@@ -367,7 +391,13 @@ impl<'a> Cq<'a> {
     /// For valid completions, it is not guaranteed that they are all success.
     /// It is the caller's responsibility to check the status of each work completion.
     pub fn poll(&self, wc: &mut [Wc]) -> Result<i32> {
-        let num = unsafe { ibv_poll_cq(self.cq.as_ptr(), wc.len() as i32, wc.as_mut_ptr().cast()) };
+        let num = unsafe {
+            ibv_poll_cq(
+                self.inner.cq.as_ptr(),
+                wc.len() as i32,
+                wc.as_mut_ptr().cast(),
+            )
+        };
 
         if num < 0 {
             Err(anyhow::anyhow!(io::Error::last_os_error()))
@@ -420,11 +450,5 @@ impl<'a> Cq<'a> {
             wc[i].result()?;
         }
         Ok(())
-    }
-}
-
-impl<'a> Drop for Cq<'a> {
-    fn drop(&mut self) {
-        unsafe { ibv_destroy_cq(self.cq.as_ptr()) };
     }
 }

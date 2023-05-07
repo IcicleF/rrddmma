@@ -1,39 +1,44 @@
 use std::ffi::c_void;
-use std::fmt;
 use std::ops::Range;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use super::pd::Pd;
 
 use anyhow;
 use rdma_sys::*;
 
-/// Local memory region.
-///
-/// A memory region is a contiguous region of memory that is registered with the RDMA device.
 #[allow(dead_code)]
-pub struct Mr<'a> {
-    pd: &'a Pd<'a>,
+#[derive(Debug)]
+struct MrInner {
+    pd: Pd,
     mr: NonNull<ibv_mr>,
 
     addr: *mut u8,
     len: usize,
 }
 
-/// Access to the same memory region from multiple threads is guaranteed to be
-/// safe by the ibverbs userspace driver.
-unsafe impl<'a> Sync for Mr<'a> {}
+unsafe impl Send for MrInner {}
+unsafe impl Sync for MrInner {}
 
-impl<'a> fmt::Debug for Mr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Mr")
-            .field("addr", &self.addr)
-            .field("len", &self.len)
-            .finish()
+impl Drop for MrInner {
+    fn drop(&mut self) {
+        unsafe {
+            ibv_dereg_mr(self.mr.as_ptr());
+        }
     }
 }
 
-impl<'a> Mr<'a> {
+/// Local memory region.
+///
+/// A memory region is a contiguous region of memory that is registered with the RDMA device.
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+pub struct Mr {
+    inner: Arc<MrInner>,
+}
+
+impl Mr {
     /// Register a memory region with the given protection domain.
     ///
     /// *Memory region* is an RDMA concept representing a handle to a
@@ -49,7 +54,7 @@ impl<'a> Mr<'a> {
     /// - `IBV_ACCESS_REMOTE_WRITE` for remote RDMA write
     /// - `IBV_ACCESS_REMOTE_READ` for remote RDMA read
     /// - `IBV_ACCESS_REMOTE_ATOMIC` for remote atomics
-    pub fn reg(pd: &'a Pd, addr: *mut u8, len: usize) -> anyhow::Result<Self> {
+    pub fn reg(pd: Pd, addr: *mut u8, len: usize) -> anyhow::Result<Self> {
         let mr = NonNull::new(unsafe {
             ibv_reg_mr(
                 pd.as_ptr(),
@@ -63,43 +68,45 @@ impl<'a> Mr<'a> {
             )
         })
         .ok_or_else(|| anyhow::anyhow!("ibv_reg_mr failed: {}", std::io::Error::last_os_error()))?;
-        Ok(Self { pd, mr, addr, len })
+        Ok(Self {
+            inner: Arc::new(MrInner { pd, mr, addr, len }),
+        })
     }
 
     /// Register a memory region with the given protection domain.
     /// It simply calls `reg` with the pointer of the given slice.
-    pub fn reg_slice(pd: &'a Pd, buf: &[u8]) -> anyhow::Result<Self> {
+    pub fn reg_slice(pd: Pd, buf: &[u8]) -> anyhow::Result<Self> {
         Self::reg(pd, buf.as_ptr() as *mut u8, buf.len())
     }
 
     /// Get the underlying `ibv_mr` structure.
     #[inline]
     pub fn as_ptr(&self) -> *mut ibv_mr {
-        self.mr.as_ptr()
+        self.inner.mr.as_ptr()
     }
 
     /// Get the start address of the registered memory area.
     #[inline]
     pub fn addr(&self) -> *mut u8 {
-        self.addr
+        self.inner.addr
     }
 
     /// Get the length of the registered memory area.
     #[inline]
     pub fn len(&self) -> usize {
-        self.len
+        self.inner.len
     }
 
     /// Get the local key of the memory region.
     #[inline]
     pub fn lkey(&self) -> u32 {
-        unsafe { (*self.mr.as_ptr()).lkey }
+        unsafe { (*self.inner.mr.as_ptr()).lkey }
     }
 
     /// Get the remote key of the memory region.
     #[inline]
     pub fn rkey(&self) -> u32 {
-        unsafe { (*self.mr.as_ptr()).rkey }
+        unsafe { (*self.inner.mr.as_ptr()).rkey }
     }
 
     /// Get a memory region slice that represents the entire memory area.
@@ -125,7 +132,7 @@ impl<'a> Mr<'a> {
     /// is out of bounds.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
-        let offset = ptr as usize - self.addr as usize;
+        let offset = ptr as usize - self.inner.addr as usize;
         self.get_slice_unchecked(offset..(offset + len))
     }
 
@@ -138,23 +145,13 @@ impl<'a> Mr<'a> {
     }
 }
 
-/// Deregister the memory region when dropped.
-/// `mem::forget`-ting this structure will result in a resource leakage.
-impl<'a> Drop for Mr<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            ibv_dereg_mr(self.mr.as_ptr());
-        }
-    }
-}
-
 /// Slice of a local memory region.
 ///
 /// Data-plane verbs accept local memory region slices.
 /// In other words, a slice corresponds to an RDMA scatter-gather list entry.
 #[derive(Debug, Clone)]
 pub struct MrSlice<'a> {
-    mr: &'a Mr<'a>,
+    mr: &'a Mr,
     range: Range<usize>,
 }
 
@@ -251,7 +248,7 @@ impl RemoteMr {
     }
 }
 
-impl<'a> From<&'a Mr<'a>> for RemoteMr {
+impl<'a> From<&'a Mr> for RemoteMr {
     fn from(mr: &'a Mr) -> Self {
         Self {
             addr: mr.addr() as u64,

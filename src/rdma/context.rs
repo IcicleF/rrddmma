@@ -1,4 +1,5 @@
 use std::ptr::NonNull;
+use std::sync::Arc;
 use std::{fmt, io, mem};
 
 use super::device::DeviceList;
@@ -7,16 +8,8 @@ use super::gid::Gid;
 use anyhow;
 use rdma_sys::*;
 
-/// Device context.
-///
-/// This structure owns a valid opened device context (`ibv_context`) and is
-/// responsible of closing it when dropped.
-///
-/// **NOTE:** Rather than a pure `ibv_context`, this structure also specifies a
-/// device port. To operate on different ports of the same device, it is required
-/// to create multiple `Context` objects.
 #[allow(dead_code)]
-pub struct Context {
+struct ContextInner {
     ctx: NonNull<ibv_context>,
     dev_attr: ibv_device_attr,
 
@@ -26,17 +19,36 @@ pub struct Context {
     gid_index: u8,
 }
 
-/// Access to the same device from multiple threads is guaranteed to be safe by
-/// the ibverbs userspace driver.
-unsafe impl Sync for Context {}
+unsafe impl Send for ContextInner {}
+unsafe impl Sync for ContextInner {}
 
-impl fmt::Debug for Context {
+impl fmt::Debug for ContextInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Context")
             .field("ctx", &self.ctx)
             .field("gid", &self.gid)
             .finish()
     }
+}
+
+impl Drop for ContextInner {
+    fn drop(&mut self) {
+        unsafe { ibv_close_device(self.ctx.as_ptr()) };
+    }
+}
+
+/// Device context.
+///
+/// This structure owns a valid opened device context (`ibv_context`) and is
+/// responsible of closing it when dropped.
+///
+/// **NOTE:** Rather than a pure `ibv_context`, this structure also specifies a
+/// device port. To operate on different ports of the same device, it is required
+/// to create multiple `Context` objects.
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+pub struct Context {
+    inner: Arc<ContextInner>,
 }
 
 impl Context {
@@ -87,44 +99,46 @@ impl Context {
             Gid::from(gid)
         };
 
-        Ok(Self {
-            ctx,
-            dev_attr,
-            port_attr,
-            port_num,
-            gid,
-            gid_index,
+        Ok(Context {
+            inner: Arc::new(ContextInner {
+                ctx,
+                dev_attr,
+                port_attr,
+                port_num,
+                gid,
+                gid_index,
+            }),
         })
     }
 
     /// Get the underlying `ibv_context` pointer.
     #[inline]
     pub fn as_ptr(&self) -> *mut ibv_context {
-        self.ctx.as_ptr()
+        self.inner.ctx.as_ptr()
     }
 
     /// Get the LID of the specified port.
     #[inline]
     pub fn lid(&self) -> u16 {
-        self.port_attr.lid
+        self.inner.port_attr.lid
     }
 
     /// Get the port number passed by the user when opening this context.
     #[inline]
     pub fn port_num(&self) -> u8 {
-        self.port_num
+        self.inner.port_num
     }
 
     /// Get the specified GID of the opened device.
     #[inline]
     pub fn gid(&self) -> Gid {
-        self.gid.clone()
+        self.inner.gid.clone()
     }
 
     /// Get the GID index passed by the user when opening this context.
     #[inline]
     pub fn gid_index(&self) -> u8 {
-        self.gid_index
+        self.inner.gid_index
     }
 
     /// Get the path MTU of the specified port.
@@ -132,14 +146,6 @@ impl Context {
     /// **NOTE:** the return value is an integer and should be viewed as a value of the `ibv_mtu` enum.
     #[inline]
     pub fn active_mtu(&self) -> u32 {
-        self.port_attr.active_mtu
-    }
-}
-
-/// Close the device context when dropped.
-/// `mem::forget`-ting this structure will result in a resource leakage.
-impl Drop for Context {
-    fn drop(&mut self) {
-        unsafe { ibv_close_device(self.ctx.as_ptr()) };
+        self.inner.port_attr.active_mtu
     }
 }

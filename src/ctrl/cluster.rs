@@ -2,7 +2,6 @@ use std::io::prelude::*;
 use std::iter;
 use std::net::*;
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::Result;
 use local_ip_address::list_afinet_netifas;
@@ -161,10 +160,10 @@ impl Cluster {
     #[inline]
     pub fn connect_all<'a, 'b: 'a>(
         &'a self,
-        pd: &'b Pd<'b>,
+        pd: &'b Pd,
         qp_type: QpType,
         num_links: usize,
-    ) -> impl iter::Iterator<Item = (usize, Vec<(Qp<'b>, QpPeer)>)> + 'a {
+    ) -> impl iter::Iterator<Item = (usize, Vec<(Qp, QpPeer)>)> + 'a {
         fn pow2_roundup(x: usize) -> usize {
             let mut n = 1;
             while n < x {
@@ -185,7 +184,7 @@ impl Cluster {
 
 struct ConnectionIter<'a, 'b> {
     cluster: &'a Cluster,
-    pd: &'b Pd<'b>,
+    pd: &'b Pd,
     n: usize,
     i: usize,
     qp_type: QpType,
@@ -193,7 +192,7 @@ struct ConnectionIter<'a, 'b> {
 }
 
 impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
-    type Item = (usize, Vec<(Qp<'b>, QpPeer)>);
+    type Item = (usize, Vec<(Qp, QpPeer)>);
 
     fn next(&mut self) -> Option<Self::Item> {
         fn progress_iter<'a, 'b>(this: &mut ConnectionIter<'a, 'b>) -> Option<usize> {
@@ -215,11 +214,11 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
 
         let qps = (0..self.num_links)
             .map(|_| {
-                let send_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
-                let recv_cq = Arc::new(Cq::new(self.pd.context(), None).unwrap());
+                let send_cq = Cq::new(self.pd.context(), None).unwrap();
+                let recv_cq = Cq::new(self.pd.context(), None).unwrap();
                 let qp = Qp::new(
-                    self.pd,
-                    QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), self.qp_type, true),
+                    self.pd.clone(),
+                    QpInitAttr::new(&send_cq, &recv_cq, QpCaps::default(), self.qp_type, true),
                 )
                 .unwrap();
                 qp

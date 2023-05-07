@@ -5,14 +5,9 @@ A Rust RDMA library based on [rdma-sys](https://github.com/datenlord/rdma-sys).
 This library provides safe wrappers of the unsafe `ibverbs` interfaces, while preserving the original *post-poll* semantics.
 Currently, there is no async support.
 
-## Example
+## Implementation
 
-```rust
-use rrddmma::*;
-use anyhow::Result;
-
-fn main() -> Result<()> {
-    let context = rrddmma::Context::open(Some("mlx5_0"), 1, 0)?;
-    let pd = rrddmma::Pd::new(&context)?;
-}
-```
+Beneath the interfaces exposed, every data structure maintains allocated `ibv_*` resources with an `Arc` if there are any.
+As a result, such data structures can always be cloned.
+Although this seems to introduce an unnecessary extra layer of indirection, it will also significantly relieve the programmer's
+stress when they need to share the resources among threads.

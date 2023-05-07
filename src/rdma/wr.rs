@@ -15,7 +15,7 @@ struct WrBase<'a> {
     /// Pretend to hold a reference to the original memory regions even if we
     /// have already transformed the slices into a scatter-gather list.
     /// This prevents the SGL from being invalid.
-    marker: PhantomData<&'a Mr<'a>>,
+    marker: PhantomData<&'a Mr>,
 }
 
 /// Send work request details.
