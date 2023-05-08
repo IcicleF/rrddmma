@@ -83,6 +83,7 @@ impl<'a> SendWr<'a> {
         };
         wr.next = ptr::null_mut();
 
+        // Fill in work request details
         fn fill_opcode_with_imm(
             wr: &mut ibv_send_wr,
             imm: &Option<u32>,

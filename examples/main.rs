@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
 
     rrddmma::ctrl::Barrier::wait(&cluster);
     let mut conns = HashMap::new();
-    for (i, links) in cluster.connect_all(&pd, rrddmma::QpType::RC, 64) {
+    for (i, links) in cluster.connect_all_rc(&pd, 64) {
         conns.insert(i, links);
     }
     println!("connected ({})", conns.len());

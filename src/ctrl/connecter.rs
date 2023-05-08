@@ -34,6 +34,12 @@ pub struct Connecter<'a> {
 }
 
 impl<'a> Connecter<'a> {
+    /// Create a new `Connecter` that connects with the remote peer with the
+    /// given rank on the given TCP port.
+    ///
+    /// Who will be the client is determined by the ranks of the two sides of
+    /// the connection. The side with the smaller rank will be the client.
+    /// Generally, you must ensure that the port is vacant on both sides.
     pub fn new_on_port(cluster: &'a Cluster, with: usize, port: u16) -> Self {
         if with >= cluster.size() {
             return Self {
@@ -71,11 +77,14 @@ impl<'a> Connecter<'a> {
         }
     }
 
+    /// Create a new `Connecter` that connects with the remote peer with the
+    /// given rank on the default TCP port 13337.
     pub fn new(cluster: &'a Cluster, with: usize) -> Self {
         const PORT: u16 = 13337;
         Self::new_on_port(cluster, with, PORT)
     }
 
+    /// Connect a QP with the remote peer.
     pub fn connect(&self, qp: &'a Qp) -> Result<QpPeer> {
         let ep = QpEndpoint::from(qp);
         let ep = serde_json::to_string(&ep)?;
@@ -101,6 +110,10 @@ impl<'a> Connecter<'a> {
         QpPeer::new(qp.pd(), ep)
     }
 
+    /// Connect a list of QPs with the remote peer.
+    ///
+    /// It is expected that the opponent side calls this method simultaneously
+    /// with a same number of QPs.
     pub fn connect_many(&self, qps: &Vec<Qp>) -> Result<Vec<QpPeer>> {
         let ep = qps
             .iter()
@@ -125,6 +138,10 @@ impl<'a> Connecter<'a> {
             let buf = stream_read(&mut stream)?;
             serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?
         };
+
+        if eps.len() != qps.len() {
+            return Err(anyhow::anyhow!("QP number mismatch"));
+        }
         let peers = eps
             .into_iter()
             .zip(qps)
@@ -136,6 +153,7 @@ impl<'a> Connecter<'a> {
         Ok(peers)
     }
 
+    /// Send a local MR's information to the remote side.
     pub fn send_mr(&self, mr: &Mr) -> Result<()> {
         let mr = RemoteMr::from(mr);
         let mr = serde_json::to_string(&mr)?;
@@ -146,6 +164,7 @@ impl<'a> Connecter<'a> {
         Ok(())
     }
 
+    /// Receive sent MR information from the opponent's side.
     pub fn recv_mr(&self) -> Result<RemoteMr> {
         let mut stream = self.stream.as_ref().unwrap();
         let buf = stream_read(&mut stream)?;

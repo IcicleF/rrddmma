@@ -32,9 +32,14 @@
 //! }
 //! ```
 //!
+//! ## Warning
+//!
+//! **The interfaces are unstable and up to change!**
+//!
 //! [`rdma-sys`]: https://docs.rs/rdma-sys/latest/rdma_sys/
 
 mod rdma;
+pub use rdma::gid::Gid;
 pub use rdma::{context::Context, cq::*, mr::*, pd::Pd, qp::*, wr::*};
 
 /// Connection management utilities.

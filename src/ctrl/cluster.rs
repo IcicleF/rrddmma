@@ -140,7 +140,7 @@ impl Cluster {
         self.peers.get(id).cloned()
     }
 
-    /// Establish connections with all nodes in the cluster.
+    /// Establish reliable connections (RCs) with all nodes in the cluster.
     /// Return an iterator that yields a `Vec` of `Qp`s and `QpPeer`s for
     /// each node. The `Vec`'s size is specified by `num_link`.
     ///
@@ -158,10 +158,9 @@ impl Cluster {
     /// iterate forwards concurrently. They will synchronize with each other
     /// using `Barrier`.
     #[inline]
-    pub fn connect_all<'a, 'b: 'a>(
+    pub fn connect_all_rc<'a, 'b: 'a>(
         &'a self,
         pd: &'b Pd,
-        qp_type: QpType,
         num_links: usize,
     ) -> impl iter::Iterator<Item = (usize, Vec<(Qp, QpPeer)>)> + 'a {
         fn pow2_roundup(x: usize) -> usize {
@@ -176,7 +175,6 @@ impl Cluster {
             pd,
             n: pow2_roundup(self.size()),
             i: 1,
-            qp_type,
             num_links,
         }
     }
@@ -187,7 +185,6 @@ struct ConnectionIter<'a, 'b> {
     pd: &'b Pd,
     n: usize,
     i: usize,
-    qp_type: QpType,
     num_links: usize,
 }
 
@@ -218,7 +215,7 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
                 let recv_cq = Cq::new(self.pd.context(), None).unwrap();
                 let qp = Qp::new(
                     self.pd.clone(),
-                    QpInitAttr::new(&send_cq, &recv_cq, QpCaps::default(), self.qp_type, true),
+                    QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::RC, true),
                 )
                 .unwrap();
                 qp

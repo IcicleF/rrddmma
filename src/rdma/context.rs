@@ -39,7 +39,7 @@ impl Drop for ContextInner {
 
 /// Device context.
 ///
-/// Rather than a pure `ibv_context`, you also need to specifie a device port
+/// Rather than a pure `ibv_context`, you also need to specify a device port
 /// when creating an instance of this type. To operate on different ports of
 /// the same device, it is required to create multiple `Context` instances.
 #[derive(Debug, Clone)]

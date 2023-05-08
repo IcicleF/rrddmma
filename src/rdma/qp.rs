@@ -80,6 +80,8 @@ impl From<u32> for QpState {
 }
 
 /// Queue pair capability attributes.
+///
+/// This type corresponds to `struct ibv_qp_cap` in the ibverbs C driver.
 #[derive(fmt::Debug, Clone, Copy)]
 pub struct QpCaps {
     /// The maximum number of outstanding Work Requests that can be posted to
@@ -172,10 +174,10 @@ pub struct QpInitAttr {
 }
 
 impl QpInitAttr {
-    pub fn new(send_cq: &Cq, recv_cq: &Cq, cap: QpCaps, qp_type: QpType, sq_sig_all: bool) -> Self {
+    pub fn new(send_cq: Cq, recv_cq: Cq, cap: QpCaps, qp_type: QpType, sq_sig_all: bool) -> Self {
         QpInitAttr {
-            send_cq: send_cq.clone(),
-            recv_cq: recv_cq.clone(),
+            send_cq,
+            recv_cq,
             cap,
             qp_type,
             sq_sig_all,
@@ -322,16 +324,19 @@ impl Qp {
         })
     }
 
+    /// Get the underlying `ibv_qp` pointer.
     #[inline]
     pub fn as_ptr(&self) -> *mut ibv_qp {
         self.inner.qp.as_ptr()
     }
 
+    /// Get the protection domain of the queue pair.
     #[inline]
     pub fn pd(&self) -> Pd {
         self.inner.pd.clone()
     }
 
+    /// Get the type of the queue pair.
     #[inline]
     pub fn qp_type(&self) -> QpType {
         let ty = unsafe { (*self.inner.qp.as_ptr()).qp_type };
@@ -342,11 +347,13 @@ impl Qp {
         }
     }
 
+    /// Get the queue pair number.
     #[inline]
     pub(crate) fn qp_num(&self) -> u32 {
         unsafe { (*self.inner.qp.as_ptr()).qp_num }
     }
 
+    /// Get the current state of the queue pair.
     #[inline]
     pub fn state(&self) -> QpState {
         let state = unsafe { (*self.inner.qp.as_ptr()).state };
@@ -360,11 +367,13 @@ impl Qp {
         }
     }
 
+    /// Get the associated send completion queue.
     #[inline]
     pub fn scq(&self) -> Cq {
         self.inner.init_attr.send_cq.clone()
     }
 
+    /// Get the associated receive completion queue.
     #[inline]
     pub fn rcq(&self) -> Cq {
         self.inner.init_attr.recv_cq.clone()
@@ -466,6 +475,8 @@ impl Qp {
         }
     }
 
+    /// Establish connection with the remote endpoint.
+    /// Performs no-op if the QP type is UD.
     pub fn connect(&self, ep: &QpEndpoint) -> Result<()> {
         if self.state() == QpState::Reset {
             self.modify_reset_to_init(ep)?;
@@ -479,9 +490,9 @@ impl Qp {
         Ok(())
     }
 
-    /// Post a RDMA recv using the given buffer array.
+    /// Post a RDMA recv request.
     ///
-    /// **NOTE:** This method has no mutable borrows it its parameters, but can
+    /// **NOTE:** This method has no mutable borrows to its parameters, but can
     /// cause the content of the buffers to be modified!
     pub fn recv(&self, local: &[MrSlice<'_>], wr_id: u64) -> Result<()> {
         let mut sgl = build_sgl(local);
@@ -506,6 +517,11 @@ impl Qp {
         }
     }
 
+    /// Post an RDMA send request.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the send
+    /// by some means, for example by polling the send CQ.
     pub fn send(
         &self,
         local: &[MrSlice<'_>],
@@ -540,6 +556,11 @@ impl Qp {
         }
     }
 
+    /// Post an RDMA send request targeted at the specified peer.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the send
+    /// by some means, for example by polling the send CQ.
     pub fn send_to(
         &self,
         peer: &QpPeer,
@@ -576,6 +597,13 @@ impl Qp {
         }
     }
 
+    /// Post an RDMA read request.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the write
+    /// by some means, for example by polling the send CQ. Also, this method has
+    /// no mutable borrows to its parameters, but can cause the content of the
+    /// buffers to be modified!
     pub fn read(
         &self,
         local: &[MrSlice<'_>],
@@ -612,6 +640,11 @@ impl Qp {
         }
     }
 
+    /// Post an RDMA write request.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the write
+    /// by some means, for example by polling the send CQ.
     pub fn write(
         &self,
         local: &[MrSlice<'_>],
@@ -656,6 +689,8 @@ impl Qp {
         }
     }
 
+    /// Post a list of send work requests to the queue pair in order.
+    /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
     pub fn post_send(&self, ops: &[SendWr<'_>]) -> Result<()> {
         // Safety: we only hold references to the `SendWr`s, whose lifetimes
@@ -677,6 +712,8 @@ impl Qp {
         }
     }
 
+    /// Post a list of receive work requests to the queue pair in order.
+    /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
     pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
         // Safety: we only hold references to the `RecvWr`s, whose lifetimes

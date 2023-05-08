@@ -8,6 +8,15 @@ use std::net::*;
 pub struct Barrier;
 
 impl Barrier {
+    /// Wait for all processes in the cluster to reach this point of the code
+    /// using the given TCP port.
+    ///
+    /// ## Synchronization scheme
+    ///
+    /// The process with rank 0 will listen on the given port. All other
+    /// processes will try to connect to the process with rank 0. Once the
+    /// rank 0 process has received all connections, it will send a byte to
+    /// all other processes to let them proceed.
     pub fn wait_on_port(cluster: &Cluster, port: u16) {
         if cluster.rank() == 0 {
             let inaddr_any = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
@@ -39,6 +48,8 @@ impl Barrier {
         }
     }
 
+    /// Wait for all processes in the cluster to reach this point of the code
+    /// using the default TCP port 13373.
     pub fn wait(cluster: &Cluster) {
         const PORT: u16 = 13373;
         Self::wait_on_port(cluster, PORT);
