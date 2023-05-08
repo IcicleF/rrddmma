@@ -31,6 +31,9 @@ impl Drop for MrInner {
 
 /// Local memory region.
 ///
+/// This type is a simple wrapper of an `Arc` and is guaranteed to have the
+/// same memory layout with it.
+///
 /// A memory region is a virtual memory space registered to the RDMA device.
 /// The registered memory itself does not belong to this type.
 #[derive(Debug, Clone)]

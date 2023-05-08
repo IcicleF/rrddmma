@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// An 128-bit identifier used to identify a port on a network adapter, a port
 /// on a router, or a multicast group.
+/// It guarantees to have the same memory layout with `ibv_gid`.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Gid(ibv_gid);

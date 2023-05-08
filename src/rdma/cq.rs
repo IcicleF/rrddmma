@@ -339,9 +339,12 @@ impl Drop for CqInner {
 
 /// Completion queue.
 ///
-/// This structure owns a completion queue (`ibv_cq`) and holds a reference
-/// to the device context of the queue to ensure the context will not get
-/// dropped too early.
+/// This type is a simple wrapper of an `Arc` and is guaranteed to have the
+/// same memory layout with it.
+///
+/// The underlying type behind the `Arc` owns a completion queue (`ibv_cq`)
+/// and holds a reference to the device context of the queue to ensure the
+/// context will not get dropped too early.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Cq {

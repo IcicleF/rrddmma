@@ -1,16 +1,16 @@
 use anyhow;
-use rrddmma::ctrl::Connecter;
+use rrddmma::*;
 use std::collections::HashMap;
 
 fn main() -> anyhow::Result<()> {
-    let cluster = rrddmma::ctrl::Cluster::load_toml("examples/lab.toml")?;
+    let cluster = ctrl::Cluster::load_toml("examples/lab.toml")?;
     println!("This is node {}", cluster.rank());
 
     // Basic context & pd
-    let context = rrddmma::Context::open(Some("mlx5_0"), 1, 0)?;
-    let pd = rrddmma::Pd::new(context.clone())?;
+    let context = Context::open(Some("mlx5_0"), 1, 0)?;
+    let pd = Pd::new(context.clone())?;
 
-    rrddmma::ctrl::Barrier::wait(&cluster);
+    ctrl::Barrier::wait(&cluster);
     let mut conns = HashMap::new();
     for (i, links) in cluster.connect_all_rc(&pd, 64) {
         conns.insert(i, links);
@@ -18,10 +18,10 @@ fn main() -> anyhow::Result<()> {
     println!("connected ({})", conns.len());
 
     let buf = vec![0u8; 4096];
-    let mr = rrddmma::Mr::reg_slice(pd.clone(), &buf)?;
+    let mr = Mr::reg_slice(pd.clone(), &buf)?;
 
     if cluster.rank() == 0 {
-        let rem_mr = Connecter::new(&cluster, 1).recv_mr()?;
+        let rem_mr = ctrl::Connecter::new(&cluster, 1).recv_mr()?;
         println!("received remote mr");
 
         let qp = &conns[&1][0].0;
@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
         Connecter::new(&cluster, 0).send_mr(&mr)?;
         println!("sent mr to remote");
     }
-    rrddmma::ctrl::Barrier::wait(&cluster);
+    ctrl::Barrier::wait(&cluster);
 
     Ok(())
 }

@@ -24,6 +24,9 @@ impl Drop for PdInner {
 }
 
 /// Protection domain.
+///
+/// This type is a simple wrapper of an `Arc` and is guaranteed to have the
+/// same memory layout with it.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Pd {

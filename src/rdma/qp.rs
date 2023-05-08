@@ -293,6 +293,9 @@ impl Drop for QpInner {
 }
 
 /// Queue pair.
+///
+/// This type is a simple wrapper of an `Arc` and is guaranteed to have the
+/// same memory layout with it.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Qp {
