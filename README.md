@@ -1,6 +1,10 @@
 # rrddmma
 
-A Rust RDMA library based on [rdma-sys](https://github.com/datenlord/rdma-sys).
+> **A Rust RDMA library.**
+
+[![Crates.io](https://img.shields.io/crates/v/rrddmma)](https://crates.io/crates/rrddmma)
+[![Crates.io](https://img.shields.io/crates/d/rrddmma)](https://crates.io/crates/rrddmma)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE-MIT)
 
 This library provides safe wrappers of the unsafe `ibverbs` interfaces, while preserving the original *post-poll* semantics.
 Currently, there is no async support.
