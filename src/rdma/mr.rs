@@ -174,59 +174,43 @@ impl<'mem> Mr<'mem> {
 /// A slice corresponds to an RDMA scatter-gather list entry, which can be used
 /// in RDMA data-plane verbs.
 #[derive(Debug, Clone)]
-pub struct MrSlice<'mem> {
-    pub(crate) addr: *mut u8,
-    pub(crate) len: usize,
-    pub(crate) lkey: u32,
-    pub(crate) rkey: u32,
-    pub(crate) marker: PhantomData<&'mem [u8]>,
+pub struct MrSlice<'a, 'mem> {
+    mr: &'a Mr<'mem>,
+    range: Range<usize>,
 }
 
-impl<'mem> MrSlice<'mem> {
+impl<'a, 'mem> MrSlice<'a, 'mem> {
     /// Create a new memory region slice of the given MR and range.
-    pub(crate) fn new(mr: &'mem Mr, range: Range<usize>) -> Self {
-        Self {
-            addr: unsafe { mr.addr().add(range.start) },
-            len: range.end - range.start,
-            lkey: mr.lkey(),
-            rkey: mr.rkey(),
-            marker: PhantomData,
-        }
+    pub fn new(mr: &'a Mr<'mem>, range: Range<usize>) -> Self {
+        Self { mr, range }
     }
 
     /// Get the starting address of the slice.
     #[inline]
     pub fn addr(&self) -> *mut u8 {
-        self.addr
+        unsafe { self.mr.addr().add(self.range.start) }
     }
 
     /// Get the length of the slice.
     #[inline]
     pub fn len(&self) -> usize {
-        self.len
+        self.range.end - self.range.start
     }
 
-    /// Get the local key of the memory region.
+    /// Get the underlying `Mr`.
     #[inline]
-    pub fn lkey(&self) -> u32 {
-        self.lkey
-    }
-
-    /// Get the remote key of the memory region.
-    #[inline]
-    pub fn rkey(&self) -> u32 {
-        self.rkey
+    pub fn mr(&self) -> &Mr<'mem> {
+        &self.mr
     }
 
     /// Sub-slicing this slice. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice<'mem>> {
+    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice<'a, 'mem>> {
         if r.start <= r.end && r.end <= self.len() {
-            Some(MrSlice {
-                addr: unsafe { self.addr.add(r.start) },
-                len: r.end - r.start,
-                ..*self
-            })
+            Some(MrSlice::new(
+                self.mr,
+                (self.range.start + r.start)..(self.range.start + r.end),
+            ))
         } else {
             None
         }
@@ -237,7 +221,7 @@ impl<'mem> MrSlice<'mem> {
     /// pointer is not contained within this slice or `(ptr .. (ptr + len))`
     /// is out of bounds with regard to this slice.
     #[inline]
-    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice<'mem> {
+    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice<'a, 'mem> {
         let offset = ptr as usize - self.addr() as usize;
         self.get_slice_unchecked(offset..(offset + len))
     }
@@ -246,11 +230,10 @@ impl<'mem> MrSlice<'mem> {
     /// the memory area within this memory slice. The behavior is undefined
     /// if the range is out of bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice<'mem> {
-        MrSlice {
-            addr: self.addr.add(r.start),
-            len: r.end - r.start,
-            ..*self
-        }
+    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice<'a, 'mem> {
+        MrSlice::new(
+            self.mr,
+            (self.range.start + r.start)..(self.range.start + r.end),
+        )
     }
 }

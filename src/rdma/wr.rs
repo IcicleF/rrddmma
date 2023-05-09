@@ -52,7 +52,12 @@ pub struct SendWr<'a>(WrBase<'a>, SendWrDetails);
 impl<'a> SendWr<'a> {
     /// Create a new send work request with basic parameters and the details
     /// that specifies its concrete type.
-    pub fn new(local: &[MrSlice<'a>], wr_id: u64, signal: bool, additions: SendWrDetails) -> Self {
+    pub fn new(
+        local: &[MrSlice<'a, '_>],
+        wr_id: u64,
+        signal: bool,
+        additions: SendWrDetails,
+    ) -> Self {
         Self(
             WrBase {
                 local: build_sgl(local),
@@ -146,7 +151,7 @@ impl<'a> SendWr<'a> {
 pub struct RecvWr<'a>(WrBase<'a>);
 
 impl<'a> RecvWr<'a> {
-    pub fn new(local: &[MrSlice<'a>], wr_id: u64, signal: bool) -> Self {
+    pub fn new(local: &[MrSlice<'a, '_>], wr_id: u64, signal: bool) -> Self {
         Self(WrBase {
             local: build_sgl(local),
             wr_id,

@@ -93,12 +93,12 @@ impl From<&'_ Mr<'_>> for RemoteMem {
 /// Pack necessary information of a `MrSlice` into a `RemoteMr` so that it can
 /// be sent to the remote side. This is useful when you only want to expose a
 /// specific part of a local memory region to the remote side.
-impl From<MrSlice<'_>> for RemoteMem {
-    fn from(slice: MrSlice<'_>) -> Self {
+impl From<MrSlice<'_, '_>> for RemoteMem {
+    fn from(slice: MrSlice<'_, '_>) -> Self {
         Self {
             addr: slice.addr() as u64,
             len: slice.len(),
-            rkey: slice.rkey(),
+            rkey: slice.mr().rkey(),
         }
     }
 }

@@ -2,7 +2,6 @@ use rrddmma::{utils::RegisteredMem, *};
 use std::{net::Ipv4Addr, thread};
 
 fn client(pd: Pd) -> anyhow::Result<()> {
-    let mem = RegisteredMem::new_with_content(pd.clone(), "Hello, rrddmma!".as_bytes())?;
     let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
     let qp = Qp::new(
         pd.clone(),
@@ -12,6 +11,7 @@ fn client(pd: Pd) -> anyhow::Result<()> {
     ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&qp)?;
 
     // Send the message to the server.
+    let mem = RegisteredMem::new_with_content(pd.clone(), "Hello, rrddmma!".as_bytes())?;
     qp.send(&[mem.as_slice()], 0, true, true)?;
     qp.scq().poll_nocqe_blocking(1)?;
     Ok(())
@@ -29,7 +29,6 @@ fn main() -> anyhow::Result<()> {
         thread::spawn(move || client(pd))
     };
 
-    let mem = RegisteredMem::new(pd.clone(), 4096)?;
     let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
     let qp = Qp::new(
         pd.clone(),
@@ -39,6 +38,7 @@ fn main() -> anyhow::Result<()> {
     ctrl::Connecter::new(None)?.connect(&qp)?;
 
     // Receive a message from the client.
+    let mem = RegisteredMem::new(pd.clone(), 4096)?;
     qp.recv(&[mem.as_slice()], 0)?;
     let mut wc = [Wc::default()];
     qp.rcq().poll_blocking(&mut wc)?;

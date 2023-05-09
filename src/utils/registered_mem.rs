@@ -1,19 +1,26 @@
-use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut, Range};
-use std::ptr::NonNull;
 
 use anyhow::Result;
-use rdma_sys::*;
 
-use crate::rdma::mr::MrSlice;
+use crate::rdma::mr::*;
 use crate::rdma::pd::*;
 
 /// A wrapper around an owned memory area that is registered as an RDMA MR.
 /// The memory area is allocated on the heap with `Box<[u8]>` and will be
 /// deallocated when this structure is dropped.
+///
+/// **WARNING:** Since Rust disallows self-referencing, this type deceives
+/// the borrow checker by storing a `Mr<'static>` inside. Generally, this
+/// should not cause any safety problems since the `Mr` references memory
+/// allocated on the heap, which isn't movable, and that it will definitely
+/// get dropped before the referenced memory.
+/// However, you should still use this type with some care.
 pub struct RegisteredMem {
-    mr: NonNull<ibv_mr>,
+    /// The memory region, dropped first.
+    mr: Mr<'static>,
+
+    /// The allocated buffer, dropped after the `Mr`.
     buf: Box<[u8]>,
 }
 
@@ -23,19 +30,7 @@ impl RegisteredMem {
     pub fn new(pd: Pd, len: usize) -> Result<Self> {
         // This should use the global allocator
         let buf = vec![0u8; len].into_boxed_slice();
-        let mr = NonNull::new(unsafe {
-            ibv_reg_mr(
-                pd.as_ptr(),
-                buf.as_ptr() as *mut c_void,
-                len,
-                (ibv_access_flags::IBV_ACCESS_LOCAL_WRITE
-                    | ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
-                    | ibv_access_flags::IBV_ACCESS_REMOTE_READ
-                    | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
-                    .0 as i32,
-            )
-        })
-        .ok_or_else(|| anyhow::anyhow!("ibv_reg_mr failed: {}", std::io::Error::last_os_error()))?;
+        let mr = Mr::reg_with_ref(pd, buf.as_ptr() as *mut _, buf.len(), &PhantomData::<()>)?;
 
         Ok(Self { mr, buf })
     }
@@ -63,29 +58,13 @@ impl RegisteredMem {
     /// Get a `MrSlice` that represents the whole memory region.
     #[inline]
     pub fn as_slice(&self) -> MrSlice {
-        MrSlice {
-            addr: self.buf.as_ptr() as *mut u8,
-            len: self.buf.len(),
-            lkey: unsafe { (*self.mr.as_ptr()).lkey },
-            rkey: unsafe { (*self.mr.as_ptr()).rkey },
-            marker: PhantomData,
-        }
+        self.mr.as_slice()
     }
 
     /// Sub-slicing this slice. Return `None` if the range is out of bounds.
     #[inline]
     pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice> {
-        if r.start <= r.end && r.end <= self.len() {
-            Some(MrSlice {
-                addr: unsafe { self.addr().add(r.start) },
-                len: r.end - r.start,
-                lkey: unsafe { (*self.mr.as_ptr()).lkey },
-                rkey: unsafe { (*self.mr.as_ptr()).rkey },
-                marker: PhantomData,
-            })
-        } else {
-            None
-        }
+        self.mr.get_slice(r)
     }
 
     /// Get a memory region slice from a pointer inside the represented memory
@@ -94,8 +73,7 @@ impl RegisteredMem {
     /// is out of bounds with regard to this slice.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
-        let offset = ptr as usize - self.addr() as usize;
-        self.get_slice_unchecked(offset..(offset + len))
+        self.mr.get_slice_from_ptr(ptr, len)
     }
 
     /// Get a memory region slice that represents the specified range of the
@@ -103,13 +81,7 @@ impl RegisteredMem {
     /// if the range is out of bounds.
     #[inline]
     pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice {
-        MrSlice {
-            addr: self.addr().add(r.start),
-            len: r.end - r.start,
-            lkey: unsafe { (*self.mr.as_ptr()).lkey },
-            rkey: unsafe { (*self.mr.as_ptr()).rkey },
-            marker: PhantomData,
-        }
+        self.mr.get_slice_unchecked(r)
     }
 }
 

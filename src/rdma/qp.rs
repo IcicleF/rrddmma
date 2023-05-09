@@ -505,7 +505,7 @@ impl Qp {
     ///
     /// **NOTE:** This method has no mutable borrows to its parameters, but can
     /// cause the content of the buffers to be modified!
-    pub fn recv(&self, local: &[MrSlice<'_>], wr_id: u64) -> Result<()> {
+    pub fn recv(&self, local: &[MrSlice], wr_id: u64) -> Result<()> {
         let mut sgl = build_sgl(local);
         let mut wr = ibv_recv_wr {
             wr_id,
@@ -533,13 +533,7 @@ impl Qp {
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the send
     /// by some means, for example by polling the send CQ.
-    pub fn send(
-        &self,
-        local: &[MrSlice<'_>],
-        wr_id: u64,
-        signal: bool,
-        inline: bool,
-    ) -> Result<()> {
+    pub fn send(&self, local: &[MrSlice], wr_id: u64, signal: bool, inline: bool) -> Result<()> {
         let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
@@ -575,7 +569,7 @@ impl Qp {
     pub fn send_to(
         &self,
         peer: &QpPeer,
-        local: &[MrSlice<'_>],
+        local: &[MrSlice],
         wr_id: u64,
         signal: bool,
         inline: bool,
@@ -617,7 +611,7 @@ impl Qp {
     /// buffers to be modified!
     pub fn read(
         &self,
-        local: &[MrSlice<'_>],
+        local: &[MrSlice],
         remote: &RemoteMem,
         wr_id: u64,
         signal: bool,
@@ -658,7 +652,7 @@ impl Qp {
     /// by some means, for example by polling the send CQ.
     pub fn write(
         &self,
-        local: &[MrSlice<'_>],
+        local: &[MrSlice],
         remote: &RemoteMem,
         wr_id: u64,
         imm: Option<u32>,
@@ -754,7 +748,7 @@ pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
         .map(|slice| ibv_sge {
             addr: slice.addr() as u64,
             length: slice.len() as u32,
-            lkey: slice.lkey(),
+            lkey: slice.mr().lkey(),
         })
         .collect()
 }
