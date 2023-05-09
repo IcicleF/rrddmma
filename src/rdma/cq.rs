@@ -10,7 +10,7 @@ use thiserror::Error;
 
 /// Opcode of a completion queue entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CqeOpcode {
+pub enum WcOpcode {
     /// Send request.
     Send = ibv_wc_opcode::IBV_WC_SEND as _,
     /// RDMA write request.
@@ -29,18 +29,18 @@ pub enum CqeOpcode {
     RecvRdmaImm = ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM as _,
 }
 
-impl From<u32> for CqeOpcode {
-    fn from(n: u32) -> Self {
-        match n {
-            ibv_wc_opcode::IBV_WC_SEND => CqeOpcode::Send,
-            ibv_wc_opcode::IBV_WC_RDMA_WRITE => CqeOpcode::RdmaWrite,
-            ibv_wc_opcode::IBV_WC_RDMA_READ => CqeOpcode::RdmaRead,
-            ibv_wc_opcode::IBV_WC_COMP_SWAP => CqeOpcode::CompSwap,
-            ibv_wc_opcode::IBV_WC_FETCH_ADD => CqeOpcode::FetchAdd,
-            ibv_wc_opcode::IBV_WC_BIND_MW => CqeOpcode::BindMw,
-            ibv_wc_opcode::IBV_WC_RECV => CqeOpcode::Recv,
-            ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM => CqeOpcode::RecvRdmaImm,
-            _ => panic!("invalid opcode: {}", n),
+impl From<u32> for WcOpcode {
+    fn from(wc_opcode: u32) -> Self {
+        match wc_opcode {
+            ibv_wc_opcode::IBV_WC_SEND => WcOpcode::Send,
+            ibv_wc_opcode::IBV_WC_RDMA_WRITE => WcOpcode::RdmaWrite,
+            ibv_wc_opcode::IBV_WC_RDMA_READ => WcOpcode::RdmaRead,
+            ibv_wc_opcode::IBV_WC_COMP_SWAP => WcOpcode::CompSwap,
+            ibv_wc_opcode::IBV_WC_FETCH_ADD => WcOpcode::FetchAdd,
+            ibv_wc_opcode::IBV_WC_BIND_MW => WcOpcode::BindMw,
+            ibv_wc_opcode::IBV_WC_RECV => WcOpcode::Recv,
+            ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM => WcOpcode::RecvRdmaImm,
+            _ => panic!("invalid opcode: {}", wc_opcode),
         }
     }
 }
@@ -51,7 +51,7 @@ impl From<u32> for CqeOpcode {
 /// My biggest thanks to the author, Dotan Barak.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 #[repr(u32)]
-pub enum CqeStatus {
+pub enum WcStatus {
     /// **Operation completed successfully:** this means that the corresponding
     /// Work Request (and all of the unsignaled Work Requests that were posted
     /// previous to it) ended and the memory buffers that this Work Request
@@ -210,19 +210,22 @@ pub enum CqeStatus {
     GeneralErr = ibv_wc_status::IBV_WC_GENERAL_ERR as _,
 }
 
-impl From<u32> for CqeStatus {
-    fn from(n: u32) -> Self {
-        match n {
-            x if x <= ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE => unsafe { std::mem::transmute(n) },
-            _ => panic!("invalid wc status: {}", n),
+/// For better performance, the cast from `u32` to `WcStatus` is implemented as
+/// a direct `mem::transmute` for valid values from 0 to 23 instead of a verbose
+/// `match` statement for each possibility.
+impl From<u32> for WcStatus {
+    fn from(wc_status: u32) -> Self {
+        match wc_status {
+            x if x <= ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE => unsafe { std::mem::transmute(x) },
+            x => panic!("invalid wc status: {}", x),
         }
     }
 }
 
 /// Work completion entry.
 ///
-/// This structure transparently wraps an `ibv_wc` structure and thus represents an entry in the completion queue.
-///
+/// This structure transparently wraps an `ibv_wc` structure, representing
+/// an entry polled from the completion queue.
 #[repr(transparent)]
 pub struct Wc(ibv_wc);
 
@@ -242,8 +245,8 @@ impl Wc {
 
     /// Get the completion status.
     #[inline]
-    pub fn status(&self) -> CqeStatus {
-        CqeStatus::from(self.0.status)
+    pub fn status(&self) -> WcStatus {
+        WcStatus::from(self.0.status)
     }
 
     /// Get the completion status as a `Result`.
@@ -252,7 +255,7 @@ impl Wc {
     /// - Otherwise, return an error.
     #[inline]
     pub fn result(&self) -> Result<usize> {
-        if self.status() == CqeStatus::Success {
+        if self.status() == WcStatus::Success {
             Ok(self.0.byte_len as usize)
         } else {
             Err(self.status().into())
@@ -261,8 +264,8 @@ impl Wc {
 
     /// Get the opcode of the work request.
     #[inline]
-    pub fn opcode(&self) -> CqeOpcode {
-        CqeOpcode::from(self.0.opcode)
+    pub fn opcode(&self) -> WcOpcode {
+        WcOpcode::from(self.0.opcode)
     }
 
     /// Get the number of bytes processed or transferred.

@@ -6,6 +6,7 @@ use super::cq::Cq;
 use super::gid::Gid;
 use super::mr::*;
 use super::pd::Pd;
+use super::remote_mem::*;
 use super::wr::*;
 
 use anyhow::Result;
@@ -41,28 +42,29 @@ impl From<u32> for QpType {
 
 /// Queue pair state.
 #[derive(fmt::Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
 pub enum QpState {
-    /// Reset
-    Reset,
-    /// Init
-    Init,
-    /// Ready to receive
-    Rtr,
-    /// Ready to send
-    Rts,
-    /// Error
-    Error,
+    /// Reset.
+    Reset = ibv_qp_state::IBV_QPS_RESET as _,
+    /// Initialized.
+    Init = ibv_qp_state::IBV_QPS_INIT as _,
+    /// Ready To Receive.
+    Rtr = ibv_qp_state::IBV_QPS_RTR as _,
+    /// Ready To Send.
+    Rts = ibv_qp_state::IBV_QPS_RTS as _,
+    /// Send Queue Drain.
+    Sqd = ibv_qp_state::IBV_QPS_SQD as _,
+    /// Send Queue Error.
+    Sqe = ibv_qp_state::IBV_QPS_SQE as _,
+    /// Error.
+    Error = ibv_qp_state::IBV_QPS_ERR as _,
+    /// Unknown.
+    Unknown = ibv_qp_state::IBV_QPS_UNKNOWN as _,
 }
 
 impl From<QpState> for u32 {
     fn from(qp_state: QpState) -> Self {
-        match qp_state {
-            QpState::Reset => ibv_qp_state::IBV_QPS_RESET,
-            QpState::Init => ibv_qp_state::IBV_QPS_INIT,
-            QpState::Rtr => ibv_qp_state::IBV_QPS_RTR,
-            QpState::Rts => ibv_qp_state::IBV_QPS_RTS,
-            QpState::Error => ibv_qp_state::IBV_QPS_ERR,
-        }
+        qp_state as _
     }
 }
 
@@ -73,15 +75,21 @@ impl From<u32> for QpState {
             ibv_qp_state::IBV_QPS_INIT => QpState::Init,
             ibv_qp_state::IBV_QPS_RTR => QpState::Rtr,
             ibv_qp_state::IBV_QPS_RTS => QpState::Rts,
+            ibv_qp_state::IBV_QPS_SQD => QpState::Sqd,
+            ibv_qp_state::IBV_QPS_SQE => QpState::Sqe,
             ibv_qp_state::IBV_QPS_ERR => QpState::Error,
-            _ => panic!("invalid qp state"),
+            ibv_qp_state::IBV_QPS_UNKNOWN => QpState::Unknown,
+            x => panic!("invalid QP state: {}", x),
         }
     }
 }
 
 /// Queue pair capability attributes.
 ///
-/// This type corresponds to `struct ibv_qp_cap` in the ibverbs C driver.
+/// This type corresponds to `struct ibv_qp_cap` in the `ibverbs` C driver.
+///
+/// The documentation is heavily borrowed from [RDMAmojo](https://www.rdmamojo.com/2012/12/21/ibv_create_qp/).
+/// My biggest thanks to the author, Dotan Barak.
 #[derive(fmt::Debug, Clone, Copy)]
 pub struct QpCaps {
     /// The maximum number of outstanding Work Requests that can be posted to
@@ -610,7 +618,7 @@ impl Qp {
     pub fn read(
         &self,
         local: &[MrSlice<'_>],
-        remote: &RemoteMrSlice<'_>,
+        remote: &RemoteMem,
         wr_id: u64,
         signal: bool,
     ) -> Result<()> {
@@ -651,7 +659,7 @@ impl Qp {
     pub fn write(
         &self,
         local: &[MrSlice<'_>],
-        remote: &RemoteMrSlice<'_>,
+        remote: &RemoteMem,
         wr_id: u64,
         imm: Option<u32>,
         signal: bool,

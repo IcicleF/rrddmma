@@ -1,8 +1,9 @@
-use super::cluster::Cluster;
-use crate::rdma::{mr::*, qp::*};
-use anyhow::Result;
 use std::io::prelude::*;
 use std::net::*;
+
+use super::cluster::Cluster;
+use crate::rdma::{mr::*, qp::*, remote_mem::*};
+use anyhow::Result;
 
 fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> Result<()> {
     stream.write(&buf.len().to_le_bytes())?;
@@ -154,9 +155,12 @@ impl<'a> Connecter<'a> {
     }
 
     /// Send a local MR's information to the remote side.
-    pub fn send_mr(&self, mr: &Mr) -> Result<()> {
-        let mr = RemoteMr::from(mr);
-        let mr = serde_json::to_string(&mr)?;
+    ///
+    /// This method accepts a `MrSlice` instead of a `Mr` to let the sender
+    /// control what part of the MR to send.
+    pub fn send_mr(&self, slice: MrSlice) -> Result<()> {
+        let mr_data = RemoteMem::from(slice);
+        let mr = serde_json::to_string(&mr_data)?;
 
         let mut stream = self.stream.as_ref().unwrap();
         stream_write(&mut stream, mr.as_bytes())?;
@@ -165,10 +169,10 @@ impl<'a> Connecter<'a> {
     }
 
     /// Receive sent MR information from the opponent's side.
-    pub fn recv_mr(&self) -> Result<RemoteMr> {
+    pub fn recv_mr(&self) -> Result<RemoteMem> {
         let mut stream = self.stream.as_ref().unwrap();
         let buf = stream_read(&mut stream)?;
-        let mr = serde_json::from_slice::<RemoteMr>(buf.as_slice())?;
+        let mr = serde_json::from_slice::<RemoteMem>(buf.as_slice())?;
         Ok(mr)
     }
 }

@@ -5,6 +5,7 @@ use rdma_sys::*;
 
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
+use super::remote_mem::*;
 
 /// Wrapper of basic parameters of an RDMA work request.
 struct WrBase<'a> {
@@ -27,7 +28,7 @@ struct WrBase<'a> {
 /// - a set of flags (currently, only to signal or not),
 ///
 /// this type holds the remaining parameters for each type of send work request.
-pub enum SendWrDetails<'a> {
+pub enum SendWrDetails {
     /// Send requires specifying an optional immediate and whether to inline.
     Send(Option<u32>, bool),
 
@@ -36,27 +37,22 @@ pub enum SendWrDetails<'a> {
     SendTo(QpPeer, Option<u32>, bool),
 
     /// Read requires a remote memory area to read from.
-    Read(RemoteMrSlice<'a>),
+    Read(RemoteMem),
 
     /// Write requires a remote memory area to write to and an optional immediate.
-    Write(RemoteMrSlice<'a>, Option<u32>),
+    Write(RemoteMem, Option<u32>),
 }
 
 /// Send work request.
 ///
 /// Use this type when you want to post multiple send work requests to a
 /// queue pair at once (which can reduce doorbell ringing overheads).
-pub struct SendWr<'a>(WrBase<'a>, SendWrDetails<'a>);
+pub struct SendWr<'a>(WrBase<'a>, SendWrDetails);
 
 impl<'a> SendWr<'a> {
     /// Create a new send work request with basic parameters and the details
     /// that specifies its concrete type.
-    pub fn new(
-        local: &[MrSlice<'a>],
-        wr_id: u64,
-        signal: bool,
-        additions: SendWrDetails<'a>,
-    ) -> Self {
+    pub fn new(local: &[MrSlice<'a>], wr_id: u64, signal: bool, additions: SendWrDetails) -> Self {
         Self(
             WrBase {
                 local: build_sgl(local),
