@@ -355,16 +355,13 @@ pub struct Cq {
 }
 
 impl Cq {
-    pub fn new(ctx: Context, size: Option<i32>) -> Result<Self> {
-        const DEFAULT_CQ_SIZE: i32 = 128;
+    /// The default CQ depth.
+    pub const DEFAULT_CQ_DEPTH: i32 = 128;
+
+    /// Create a new completion queue.
+    pub fn new(ctx: Context, depth: i32) -> Result<Self> {
         let cq = NonNull::new(unsafe {
-            ibv_create_cq(
-                ctx.as_ptr(),
-                size.unwrap_or(DEFAULT_CQ_SIZE),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                0,
-            )
+            ibv_create_cq(ctx.as_ptr(), depth, ptr::null_mut(), ptr::null_mut(), 0)
         })
         .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
 

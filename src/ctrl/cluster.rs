@@ -34,13 +34,20 @@ impl Cluster {
         Self::new_withid(peers, id)
     }
 
-    /// Load cluster configuration from a TOML file.
-    pub fn load_toml(path: impl AsRef<Path>) -> Result<Self> {
-        let mut file = std::fs::File::open(path)?;
-        let mut toml_str = String::new();
-        file.read_to_string(&mut toml_str)?;
-
-        let toml: toml::Value = toml::from_str(&toml_str)?;
+    /// Load TOML cluster configuration.
+    ///
+    /// The TOML file should have a `rrddmma` table with a `peers` array
+    /// containing the IPv4 addresses of every pair. For example:
+    ///
+    /// ```toml
+    /// [rrddmma]
+    /// peers = ["10.0.2.1", "10.0.2.2", "10.0.2.3"]
+    /// ```
+    ///
+    /// Irrelevant fields will be ignored, and you can put the above
+    /// configuration snippet in your own mixed TOML configuration.
+    pub fn load_toml(toml: &str) -> Result<Self> {
+        let toml: toml::Value = toml::from_str(toml)?;
         let peers = match toml["rrddmma"].as_table() {
             Some(t) => t,
             None => return Err(anyhow::anyhow!("rrddmma configuration not found")),
@@ -55,11 +62,20 @@ impl Cluster {
         Ok(Self::new(peers))
     }
 
-    /// Load cluster configuration from a CloudLab XML file.
+    /// Load cluster configuration from a TOML file.
+    pub fn load_toml_file(path: impl AsRef<Path>) -> Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        let mut toml_str = String::new();
+        file.read_to_string(&mut toml_str)?;
+
+        Self::load_toml(&toml_str)
+    }
+
+    /// Load cluster configuration from CloudLab XML profile.
     ///
-    /// The CloudLab XML file is expected to contain a virtual network configuration
-    /// that specifies an IPv4 address for each node. The IPv4 address will appear
-    /// in each node's configuration in the following form:
+    /// The CloudLab XML profile is expected to contain a virtual network
+    /// configuration that specifies an IPv4 address for each node. The IPv4
+    /// address will appear in each node's configuration in the following form:
     ///
     /// ```xml
     /// <rspec ...>
@@ -72,17 +88,13 @@ impl Cluster {
     /// </rspec>
     /// ```
     ///
-    /// This function extracts the `address` attribute of such `ip` elements in each `node`
-    /// and combines them together to get a configuration.
-    pub fn load_cloudlab_xml(config_file: &str) -> Result<Self> {
+    /// This function extracts the `address` attribute of such `ip` elements in
+    /// each `node` and combines them together to get a configuration.
+    pub fn load_cloudlab_xml(xml: &str) -> Result<Self> {
         use quick_xml::events::Event;
         use quick_xml::reader::Reader;
 
-        let mut file = std::fs::File::open(config_file)?;
-        let mut xml_str = String::new();
-        file.read_to_string(&mut xml_str)?;
-
-        let mut reader = Reader::from_str(&xml_str);
+        let mut reader = Reader::from_str(xml);
         reader.trim_text(true);
 
         let mut buf = vec![];
@@ -114,6 +126,15 @@ impl Cluster {
         buf.clear();
 
         Ok(Self::new(peers))
+    }
+
+    /// Load cluster configuration from a CloudLab XML profile file.
+    pub fn load_cloudlab_xml_file(path: impl AsRef<Path>) -> Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        let mut xml_str = String::new();
+        file.read_to_string(&mut xml_str)?;
+
+        Self::load_cloudlab_xml(&xml_str)
     }
 
     /// Get the IP addresses of all nodes in the cluster.
@@ -211,8 +232,8 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
 
         let qps = (0..self.num_links)
             .map(|_| {
-                let send_cq = Cq::new(self.pd.context(), None).unwrap();
-                let recv_cq = Cq::new(self.pd.context(), None).unwrap();
+                let send_cq = Cq::new(self.pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
+                let recv_cq = Cq::new(self.pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
                 let qp = Qp::new(
                     self.pd.clone(),
                     QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::RC, true),
@@ -221,7 +242,9 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
                 qp
             })
             .collect::<Vec<_>>();
-        let ret = Connecter::new(self.cluster, peer_id).connect_many(&qps);
+        let ret = Connecter::within_cluster(self.cluster, peer_id)
+            .unwrap()
+            .connect_many(&qps);
         if let Err(e) = ret {
             log::error!("rrddmma: failed to connect to peer {}: {:?}", peer_id, e);
             Barrier::wait(self.cluster);

@@ -20,19 +20,10 @@
 //! # Example
 //!
 //! ```rust
-//! use rrddmma::*;
-//! use anyhow::Result;
-//!
-//! fn main() -> Result<()> {
-//!     let context = Context::open(Some("mlx5_0"), 1, 0)?;
-//!     let pd = Pd::new(context.clone())?;
-//!
-//!     let buf = vec![0u8; 4096];
-//!     let mr = Mr::reg_slice(pd.clone(), &buf)?;
-//!
-//!     Ok(())
-//! }
+#![doc = include_str!("../examples/local_sendrecv.rs")]
 //! ```
+//!
+//! It should print: `Hello, rrddmma!`
 //!
 //! [`rdma-sys`]: https://docs.rs/rdma-sys/latest/rdma_sys/
 
