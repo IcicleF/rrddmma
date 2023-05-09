@@ -40,3 +40,6 @@ pub use rdma::wr::*;
 
 /// Connection management utilities.
 pub mod ctrl;
+
+/// Some useful utilities.
+pub mod utils;

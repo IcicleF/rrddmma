@@ -80,8 +80,8 @@ impl<'a> From<&RemoteMem> for rdma_t {
 
 /// Pack necessary information of a `Mr` into a `RemoteMr` so that it can be
 /// sent to the remote side.
-impl From<&'_ Mr> for RemoteMem {
-    fn from(mr: &'_ Mr) -> Self {
+impl From<&'_ Mr<'_>> for RemoteMem {
+    fn from(mr: &'_ Mr<'_>) -> Self {
         Self {
             addr: mr.addr() as u64,
             len: mr.len(),
@@ -96,9 +96,9 @@ impl From<&'_ Mr> for RemoteMem {
 impl From<MrSlice<'_>> for RemoteMem {
     fn from(slice: MrSlice<'_>) -> Self {
         Self {
-            addr: slice.as_ptr() as u64,
+            addr: slice.addr() as u64,
             len: slice.len(),
-            rkey: slice.mr().rkey(),
+            rkey: slice.rkey(),
         }
     }
 }

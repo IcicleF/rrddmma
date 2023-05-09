@@ -752,9 +752,9 @@ pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
     slices
         .iter()
         .map(|slice| ibv_sge {
-            addr: slice.mr().addr() as u64 + slice.offset() as u64,
+            addr: slice.addr() as u64,
             length: slice.len() as u32,
-            lkey: slice.mr().lkey(),
+            lkey: slice.lkey(),
         })
         .collect()
 }

@@ -1,9 +1,8 @@
-use rrddmma::*;
+use rrddmma::{utils::RegisteredMem, *};
 use std::{net::Ipv4Addr, thread};
 
 fn client(pd: Pd) -> anyhow::Result<()> {
-    let buf = "Hello rrddmma!".as_bytes().to_vec();
-    let mr = Mr::reg_slice(pd.clone(), &buf)?;
+    let mem = RegisteredMem::new_with_content(pd.clone(), "Hello, rrddmma!".as_bytes())?;
     let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
     let qp = Qp::new(
         pd.clone(),
@@ -12,10 +11,9 @@ fn client(pd: Pd) -> anyhow::Result<()> {
 
     ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&qp)?;
 
-    // Post a send to the server.
-    qp.send(&[mr.as_slice()], 0, true, true)?;
+    // Send the message to the server.
+    qp.send(&[mem.as_slice()], 0, true, true)?;
     qp.scq().poll_nocqe_blocking(1)?;
-
     Ok(())
 }
 
@@ -24,15 +22,14 @@ fn main() -> anyhow::Result<()> {
     // use the GID index 0. This is an appropriate setting on an Infiniband
     // fabric. For RoCE, you may need to change the GID index.
     let context = Context::open(None, 1, 0)?;
-    let pd = Pd::new(context.clone())?;
+    let pd = Pd::new(context)?;
 
     let cli = {
         let pd = pd.clone();
         thread::spawn(move || client(pd))
     };
 
-    let buf = vec![0u8; 4096];
-    let mr = Mr::reg_slice(pd.clone(), &buf)?;
+    let mem = RegisteredMem::new(pd.clone(), 4096)?;
     let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
     let qp = Qp::new(
         pd.clone(),
@@ -42,14 +39,11 @@ fn main() -> anyhow::Result<()> {
     ctrl::Connecter::new(None)?.connect(&qp)?;
 
     // Receive a message from the client.
-    qp.recv(&[mr.as_slice()], 0)?;
+    qp.recv(&[mem.as_slice()], 0)?;
     let mut wc = [Wc::default()];
     qp.rcq().poll_blocking(&mut wc)?;
-
-    let msg = String::from_utf8_lossy(&buf[..wc[0].result()?]);
-    println!("{}", msg);
+    println!("{}", String::from_utf8_lossy(&mem[..wc[0].result()?]));
 
     cli.join().unwrap()?;
-
     Ok(())
 }

@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::Range;
 use std::ptr::NonNull;
@@ -11,18 +12,16 @@ use rdma_sys::*;
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct MrInner {
+struct MrInner<'a> {
     pd: Pd,
     mr: NonNull<ibv_mr>,
-
-    addr: *mut u8,
-    len: usize,
+    marker: PhantomData<&'a [u8]>,
 }
 
-unsafe impl Send for MrInner {}
-unsafe impl Sync for MrInner {}
+unsafe impl Send for MrInner<'_> {}
+unsafe impl Sync for MrInner<'_> {}
 
-impl Drop for MrInner {
+impl Drop for MrInner<'_> {
     fn drop(&mut self) {
         unsafe {
             ibv_dereg_mr(self.mr.as_ptr());
@@ -36,14 +35,50 @@ impl Drop for MrInner {
 /// same memory layout with it.
 ///
 /// A memory region is a virtual memory space registered to the RDMA device.
-/// The registered memory itself does not belong to this type.
+/// The registered memory itself does not belong to this type, but it must
+/// outlive this type's lifetime (`'mem`) or there can be dangling pointers.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
-pub struct Mr {
-    inner: Arc<MrInner>,
+pub struct Mr<'mem> {
+    inner: Arc<MrInner<'mem>>,
 }
 
-impl Mr {
+impl<'mem> Mr<'mem> {
+    /// Register a memory region with the given protection domain and a raw
+    /// pointer. An extra lifetime provider is required to get the lifetime
+    /// parameter for the created instance.
+    pub fn reg_with_ref<Ref: ?Sized>(
+        pd: Pd,
+        addr: *mut u8,
+        len: usize,
+        _marker: &'mem Ref,
+    ) -> anyhow::Result<Self> {
+        if mem::size_of::<usize>() != mem::size_of::<u64>() {
+            return Err(anyhow::anyhow!("non-64-bit platforms are not supported"));
+        }
+
+        let mr = NonNull::new(unsafe {
+            ibv_reg_mr(
+                pd.as_ptr(),
+                addr as *mut c_void,
+                len,
+                (ibv_access_flags::IBV_ACCESS_LOCAL_WRITE
+                    | ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
+                    | ibv_access_flags::IBV_ACCESS_REMOTE_READ
+                    | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
+                    .0 as i32,
+            )
+        })
+        .ok_or_else(|| anyhow::anyhow!("ibv_reg_mr failed: {}", std::io::Error::last_os_error()))?;
+        Ok(Self {
+            inner: Arc::new(MrInner {
+                pd,
+                mr,
+                marker: PhantomData::<&'mem [u8]>,
+            }),
+        })
+    }
+
     /// Register a memory region with the given protection domain.
     ///
     /// *Memory region* is an RDMA concept representing a handle to a
@@ -64,33 +99,8 @@ impl Mr {
     /// **NOTE:** although non-64-bit machines can hardly be seen nowadays, if
     /// you managed to run this crate on one, this function will error as remote
     /// memory addresses are represented by the `u64` type.
-    pub fn reg(pd: Pd, addr: *mut u8, len: usize) -> anyhow::Result<Self> {
-        if mem::size_of::<usize>() != mem::size_of::<u64>() {
-            return Err(anyhow::anyhow!("non-64-bit platforms are not supported"));
-        }
-
-        let mr = NonNull::new(unsafe {
-            ibv_reg_mr(
-                pd.as_ptr(),
-                addr as *mut c_void,
-                len,
-                (ibv_access_flags::IBV_ACCESS_LOCAL_WRITE
-                    | ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
-                    | ibv_access_flags::IBV_ACCESS_REMOTE_READ
-                    | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
-                    .0 as i32,
-            )
-        })
-        .ok_or_else(|| anyhow::anyhow!("ibv_reg_mr failed: {}", std::io::Error::last_os_error()))?;
-        Ok(Self {
-            inner: Arc::new(MrInner { pd, mr, addr, len }),
-        })
-    }
-
-    /// Register a memory region with the given protection domain.
-    /// It simply calls `reg` with the pointer of the given slice.
-    pub fn reg_slice(pd: Pd, buf: &[u8]) -> anyhow::Result<Self> {
-        Self::reg(pd, buf.as_ptr() as *mut u8, buf.len())
+    pub fn reg(pd: Pd, buf: &'mem [u8]) -> anyhow::Result<Self> {
+        Self::reg_with_ref(pd, buf.as_ptr() as *mut u8, buf.len(), buf)
     }
 
     /// Get the underlying `ibv_mr` structure.
@@ -102,13 +112,13 @@ impl Mr {
     /// Get the start address of the registered memory area.
     #[inline]
     pub fn addr(&self) -> *mut u8 {
-        self.inner.addr
+        unsafe { (*self.inner.mr.as_ptr()).addr as *mut u8 }
     }
 
     /// Get the length of the registered memory area.
     #[inline]
     pub fn len(&self) -> usize {
-        self.inner.len
+        unsafe { (*self.inner.mr.as_ptr()).length }
     }
 
     /// Get the local key of the memory region.
@@ -146,7 +156,7 @@ impl Mr {
     /// `(ptr .. (ptr + len))` is out of bounds.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
-        let offset = ptr as usize - self.inner.addr as usize;
+        let offset = ptr as usize - self.addr() as usize;
         self.get_slice_unchecked(offset..(offset + len))
     }
 
@@ -161,52 +171,62 @@ impl Mr {
 
 /// Slice of a local memory region.
 ///
-/// Data-plane verbs accept local memory region slices.
-/// In other words, a slice corresponds to an RDMA scatter-gather list entry.
+/// A slice corresponds to an RDMA scatter-gather list entry, which can be used
+/// in RDMA data-plane verbs.
 #[derive(Debug, Clone)]
-pub struct MrSlice<'a> {
-    mr: &'a Mr,
-    range: Range<usize>,
+pub struct MrSlice<'mem> {
+    pub(crate) addr: *mut u8,
+    pub(crate) len: usize,
+    pub(crate) lkey: u32,
+    pub(crate) rkey: u32,
+    pub(crate) marker: PhantomData<&'mem [u8]>,
 }
 
-impl<'a> MrSlice<'a> {
+impl<'mem> MrSlice<'mem> {
     /// Create a new memory region slice of the given MR and range.
-    pub fn new(mr: &'a Mr, range: Range<usize>) -> Self {
-        Self { mr, range }
+    pub(crate) fn new(mr: &'mem Mr, range: Range<usize>) -> Self {
+        Self {
+            addr: unsafe { mr.addr().add(range.start) },
+            len: range.end - range.start,
+            lkey: mr.lkey(),
+            rkey: mr.rkey(),
+            marker: PhantomData,
+        }
     }
 
-    /// Get the underlying `Mr` structure.
+    /// Get the starting address of the slice.
     #[inline]
-    pub fn mr(&self) -> &'a Mr {
-        &self.mr
-    }
-
-    /// Get the starting offset of the slice with regard to the original MR.
-    #[inline]
-    pub fn offset(&self) -> usize {
-        self.range.start
+    pub fn addr(&self) -> *mut u8 {
+        self.addr
     }
 
     /// Get the length of the slice.
     #[inline]
     pub fn len(&self) -> usize {
-        self.range.end - self.range.start
+        self.len
     }
 
-    /// Get the starting address of the slice.
+    /// Get the local key of the memory region.
     #[inline]
-    pub fn as_ptr(&self) -> *mut u8 {
-        unsafe { self.mr.addr().add(self.range.start) }
+    pub fn lkey(&self) -> u32 {
+        self.lkey
+    }
+
+    /// Get the remote key of the memory region.
+    #[inline]
+    pub fn rkey(&self) -> u32 {
+        self.rkey
     }
 
     /// Sub-slicing this slice. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice> {
+    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice<'mem>> {
         if r.start <= r.end && r.end <= self.len() {
-            Some(MrSlice::new(
-                self.mr,
-                (self.range.start + r.start)..(self.range.start + r.end),
-            ))
+            Some(MrSlice {
+                addr: unsafe { self.addr.add(r.start) },
+                len: r.end - r.start,
+                ..*self
+            })
         } else {
             None
         }
@@ -217,8 +237,8 @@ impl<'a> MrSlice<'a> {
     /// pointer is not contained within this slice or `(ptr .. (ptr + len))`
     /// is out of bounds with regard to this slice.
     #[inline]
-    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
-        let offset = ptr as usize - self.as_ptr() as usize;
+    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice<'mem> {
+        let offset = ptr as usize - self.addr() as usize;
         self.get_slice_unchecked(offset..(offset + len))
     }
 
@@ -226,10 +246,11 @@ impl<'a> MrSlice<'a> {
     /// the memory area within this memory slice. The behavior is undefined
     /// if the range is out of bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice {
-        MrSlice::new(
-            self.mr,
-            (self.range.start + r.start)..(self.range.start + r.end),
-        )
+    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice<'mem> {
+        MrSlice {
+            addr: self.addr.add(r.start),
+            len: r.end - r.start,
+            ..*self
+        }
     }
 }
