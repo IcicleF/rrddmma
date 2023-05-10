@@ -60,10 +60,10 @@ impl Context {
         let dev = dev_list
             .iter()
             .find(|dev| dev_name.map_or(true, |name| dev.name() == name))
-            .ok_or_else(|| anyhow::anyhow!("device not found"))?;
+            .ok_or(anyhow::anyhow!("device not found"))?;
 
         let ctx = NonNull::new(unsafe { ibv_open_device(dev.as_ptr()) })
-            .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
+            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
         drop(dev_list);
 
         let dev_attr = {

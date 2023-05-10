@@ -49,7 +49,7 @@ impl RemoteMem {
     /// Get a remote memory region slice from a pointer inside the remote memory
     /// area and a specified length. The behavior is undefined if the pointer
     /// is not contained within the remote MR or the specified slice
-    /// `(ptr .. (ptr + len))` is out of bounds.
+    /// `(ptr..(ptr + len))` is out of bounds.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: u64, len: usize) -> Self {
         let offset = (ptr - self.addr) as usize;

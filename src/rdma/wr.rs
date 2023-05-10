@@ -28,25 +28,43 @@ struct WrBase<'mem> {
 /// - a set of flags (currently, only to signal or not),
 ///
 /// this type holds the remaining parameters for each type of send work request.
+///
+/// **NOTE:** this type intentionally discriminates RDMA send via RC and UD QPs.
+/// This is to improve performance when the user only uses RC.
 pub enum SendWrDetails {
-    /// Send requires specifying an optional immediate and whether to inline.
-    Send(Option<u32>, bool),
+    /// Send via RC QPs requires specifying an optional immediate and whether
+    /// to inline.
+    SendRc(Option<u32>, bool),
 
     /// Send via UD QPs requires specifying the target, an optional immediate,
     /// and whether to inline.
-    SendTo(QpPeer, Option<u32>, bool),
+    SendUd(QpPeer, Option<u32>, bool),
 
     /// Read requires a remote memory area to read from.
     Read(RemoteMem),
 
     /// Write requires a remote memory area to write to and an optional immediate.
     Write(RemoteMem, Option<u32>),
+
+    /// Atomic compare-and-swap requires a remote memory area to operate on, a
+    /// value to compare against, and a value to swap with.
+    CompareSwap(RemoteMem, u64, u64),
+
+    /// Atomic fetch-and-add requires a remote memory area to operate on and a
+    /// value to add.
+    FetchAdd(RemoteMem, u64),
 }
 
 /// Send work request.
 ///
 /// Use this type when you want to post multiple send work requests to a
 /// queue pair at once (which can reduce doorbell ringing overheads).
+///
+/// **NOTE:** when using this type for RDMA atomics, the library will not
+/// check for you whether the provided memory slices are 8B-sized and
+/// 8B-aligned. It is your responsibility to ensure that they are properly
+/// sized and aligned. However, there won't be an UB even if you don't:
+/// the RDMA hardware will report an error for you.
 pub struct SendWr<'a>(WrBase<'a>, SendWrDetails);
 
 impl<'a> SendWr<'a> {
@@ -100,7 +118,7 @@ impl<'a> SendWr<'a> {
             }
         }
         match &self.1 {
-            SendWrDetails::Send(imm, inl) => {
+            SendWrDetails::SendRc(imm, inl) => {
                 fill_opcode_with_imm(
                     &mut wr,
                     &imm,
@@ -111,7 +129,7 @@ impl<'a> SendWr<'a> {
                     wr.send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
                 }
             }
-            SendWrDetails::SendTo(peer, imm, inl) => {
+            SendWrDetails::SendUd(peer, imm, inl) => {
                 wr.wr.ud = ud_t::from(peer);
                 fill_opcode_with_imm(
                     &mut wr,
@@ -135,6 +153,24 @@ impl<'a> SendWr<'a> {
                     ibv_wr_opcode::IBV_WR_RDMA_WRITE,
                     ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
                 );
+            }
+            SendWrDetails::CompareSwap(remote, current, new) => {
+                wr.wr.atomic = atomic_t {
+                    compare_add: *current,
+                    swap: *new,
+                    remote_addr: remote.addr,
+                    rkey: remote.rkey,
+                };
+                wr.opcode = ibv_wr_opcode::IBV_WR_ATOMIC_CMP_AND_SWP;
+            }
+            SendWrDetails::FetchAdd(remote, add) => {
+                wr.wr.atomic = atomic_t {
+                    compare_add: *add,
+                    swap: 0,
+                    remote_addr: remote.addr,
+                    rkey: remote.rkey,
+                };
+                wr.opcode = ibv_wr_opcode::IBV_WR_ATOMIC_FETCH_AND_ADD;
             }
         };
 

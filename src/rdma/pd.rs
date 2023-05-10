@@ -37,7 +37,7 @@ impl Pd {
     /// Allocate a protection domain for the given RDMA device context.
     pub fn new(ctx: Context) -> anyhow::Result<Self> {
         let pd = NonNull::new(unsafe { ibv_alloc_pd(ctx.as_ptr()) })
-            .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
+            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
 
         Ok(Self {
             inner: Arc::new(PdInner { ctx, pd }),

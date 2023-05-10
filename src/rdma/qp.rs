@@ -182,6 +182,7 @@ pub struct QpInitAttr {
 }
 
 impl QpInitAttr {
+    /// Generate a set of queue pair initialization attributes.
     pub fn new(send_cq: Cq, recv_cq: Cq, cap: QpCaps, qp_type: QpType, sq_sig_all: bool) -> Self {
         QpInitAttr {
             send_cq,
@@ -189,6 +190,21 @@ impl QpInitAttr {
             cap,
             qp_type,
             sq_sig_all,
+        }
+    }
+
+    /// Generate default RC queue pair initialization attributes, in which:
+    ///
+    /// - the send CQ and the receive CQ are the same,
+    /// - QP capabilities are set to the default values, and
+    /// - all the work requests are signaled.
+    pub fn default_rc(cq: Cq) -> Self {
+        QpInitAttr {
+            send_cq: cq.clone(),
+            recv_cq: cq,
+            cap: QpCaps::default(),
+            qp_type: QpType::RC,
+            sq_sig_all: true,
         }
     }
 }
@@ -263,7 +279,7 @@ impl QpPeer {
             port_num: ep.port_num,
         };
         let ah = NonNull::new(unsafe { ibv_create_ah(pd.as_ptr(), &mut ah_attr) })
-            .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
+            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
         Ok(QpPeer { ah, ep })
     }
 }
@@ -329,7 +345,7 @@ impl Qp {
         let qp = NonNull::new(unsafe {
             ibv_create_qp(pd.as_ptr(), &mut ibv_qp_init_attr::from(init_attr.clone()))
         })
-        .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
+        .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
         Ok(Qp {
             inner: Arc::new(QpInner { pd, qp, init_attr }),
         })
@@ -411,11 +427,7 @@ impl Qp {
         }
 
         let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 
     fn modify_init_to_rtr(&self, ep: &QpEndpoint) -> Result<()> {
@@ -453,11 +465,7 @@ impl Qp {
         }
 
         let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 
     fn modify_rtr_to_rts(&self, ep: &QpEndpoint) -> Result<()> {
@@ -479,11 +487,7 @@ impl Qp {
         }
 
         let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 
     /// Establish connection with the remote endpoint.
@@ -521,55 +525,22 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_recv(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 
     /// Post an RDMA send request.
     ///
-    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
-    /// It is the caller's responsibility to ensure the completion of the send
-    /// by some means, for example by polling the send CQ.
-    pub fn send(&self, local: &[MrSlice], wr_id: u64, signal: bool, inline: bool) -> Result<()> {
-        let mut sgl = build_sgl(local);
-        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
-        wr = ibv_send_wr {
-            wr_id,
-            next: ptr::null_mut(),
-            sg_list: if local.len() == 0 {
-                ptr::null_mut()
-            } else {
-                sgl.as_mut_ptr()
-            },
-            num_sge: local.len() as i32,
-            opcode: ibv_wr_opcode::IBV_WR_SEND,
-            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
-                | inline.select(ibv_send_flags::IBV_SEND_INLINE.0, 0),
-            ..wr
-        };
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
-        };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
-    }
-
-    /// Post an RDMA send request targeted at the specified peer.
+    /// If `peer` is `None`, this QP is expected to be connected and the send
+    /// will go to the remote end of the connection. Otherwise, this QP is
+    /// expected to be UD and the send will go to the specified peer.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the send
     /// by some means, for example by polling the send CQ.
-    pub fn send_to(
+    pub fn send(
         &self,
-        peer: &QpPeer,
         local: &[MrSlice],
+        peer: Option<&QpPeer>,
         wr_id: u64,
         signal: bool,
         inline: bool,
@@ -590,19 +561,18 @@ impl Qp {
                 | inline.select(ibv_send_flags::IBV_SEND_INLINE.0, 0),
             ..wr
         };
-        wr.wr.ud = ud_t::from(peer);
+        if let Some(peer) = peer {
+            wr.wr.ud = ud_t::from(peer);
+        }
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 
     /// Post an RDMA read request.
+    /// Only valid for RC QPs.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the write
@@ -638,14 +608,11 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 
     /// Post an RDMA write request.
+    /// Only valid for RC QPs.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the write
@@ -687,11 +654,124 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
+        from_c_ret(ret)
+    }
+
+    /// Post an RDMA atomic compare-and-swap (CAS) request.
+    /// Only valid for RC QPs.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the CAS
+    /// by some means, for example by polling the send CQ.
+    #[inline]
+    pub fn compare_swap(
+        &self,
+        local: &MrSlice,
+        remote: &RemoteMem,
+        current: u64,
+        new: u64,
+        wr_id: u64,
+        signal: bool,
+    ) -> Result<()> {
+        if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
+            return Err(anyhow::anyhow!(
+                "expected 8B buffers for compare-and-swap, got ({}, {})",
+                local.len(),
+                remote.len
+            ));
         }
+        if (local.addr() as u64) % (mem::align_of::<u64>() as u64) != 0
+            || remote.addr % (mem::align_of::<u64>() as u64) != 0
+        {
+            return Err(anyhow::anyhow!(
+                "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
+                local.addr(),
+                remote.addr as *const u8
+            ));
+        }
+
+        let mut sgl = [ibv_sge::from(local)];
+        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
+        wr = ibv_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: 1,
+            opcode: ibv_wr_opcode::IBV_WR_ATOMIC_CMP_AND_SWP,
+            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            wr: wr_t {
+                atomic: atomic_t {
+                    compare_add: current,
+                    swap: new,
+                    remote_addr: remote.addr,
+                    rkey: remote.rkey,
+                },
+            },
+            ..wr
+        };
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+        };
+        from_c_ret(ret)
+    }
+
+    /// Post an RDMA fetch-and-add (FAA) request.
+    /// Only valid for RC QPs.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the FAA
+    /// by some means, for example by polling the send CQ.
+    #[inline]
+    pub fn fetch_add(
+        &self,
+        local: &MrSlice,
+        remote: &RemoteMem,
+        add: u64,
+        wr_id: u64,
+        signal: bool,
+    ) -> Result<()> {
+        if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
+            return Err(anyhow::anyhow!(
+                "expected 8B buffers for fetch-add, got ({}, {})",
+                local.len(),
+                remote.len
+            ));
+        }
+        if (local.addr() as u64) % (mem::align_of::<u64>() as u64) != 0
+            || remote.addr % (mem::align_of::<u64>() as u64) != 0
+        {
+            return Err(anyhow::anyhow!(
+                "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
+                local.addr(),
+                remote.addr as *const u8
+            ));
+        }
+
+        let mut sgl = [ibv_sge::from(local)];
+        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
+        wr = ibv_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: 1,
+            opcode: ibv_wr_opcode::IBV_WR_ATOMIC_FETCH_AND_ADD,
+            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            wr: wr_t {
+                atomic: atomic_t {
+                    compare_add: add,
+                    swap: 0,
+                    remote_addr: remote.addr,
+                    rkey: remote.rkey,
+                },
+            },
+            ..wr
+        };
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+        };
+        from_c_ret(ret)
     }
 
     /// Post a list of send work requests to the queue pair in order.
@@ -710,11 +790,7 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 
     /// Post a list of receive work requests to the queue pair in order.
@@ -733,24 +809,13 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_recv(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
-        }
+        from_c_ret(ret)
     }
 }
 
 #[inline]
 pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
-    slices
-        .iter()
-        .map(|slice| ibv_sge {
-            addr: slice.addr() as u64,
-            length: slice.len() as u32,
-            lkey: slice.mr().lkey(),
-        })
-        .collect()
+    slices.iter().map(|slice| ibv_sge::from(slice)).collect()
 }
 
 // Carbon language is good at expressing this kind of thing :)
@@ -768,4 +833,8 @@ impl Select for bool {
             b
         }
     }
+}
+
+fn from_c_ret(ret: i32) -> Result<()> {
+    (ret == 0).select(Ok(()), Err(anyhow::anyhow!(io::Error::last_os_error())))
 }

@@ -3,16 +3,13 @@ use std::{net::Ipv4Addr, thread};
 
 fn client(pd: Pd) -> anyhow::Result<()> {
     let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
-    let qp = Qp::new(
-        pd.clone(),
-        QpInitAttr::new(cq.clone(), cq.clone(), QpCaps::default(), QpType::RC, true),
-    )?;
+    let qp = Qp::new(pd.clone(), QpInitAttr::default_rc(cq))?;
 
     ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&qp)?;
 
     // Send the message to the server.
     let mem = RegisteredMem::new_with_content(pd.clone(), "Hello, rrddmma!".as_bytes())?;
-    qp.send(&[mem.as_slice()], 0, true, true)?;
+    qp.send(&[mem.as_slice()], None, 0, true, true)?;
     qp.scq().poll_nocqe_blocking(1)?;
     Ok(())
 }
@@ -30,10 +27,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
-    let qp = Qp::new(
-        pd.clone(),
-        QpInitAttr::new(cq.clone(), cq.clone(), QpCaps::default(), QpType::RC, true),
-    )?;
+    let qp = Qp::new(pd.clone(), QpInitAttr::default_rc(cq))?;
 
     ctrl::Connecter::new(None)?.connect(&qp)?;
 

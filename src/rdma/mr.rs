@@ -1,21 +1,21 @@
 use std::ffi::c_void;
 use std::marker::PhantomData;
-use std::mem;
 use std::ops::Range;
 use std::ptr::NonNull;
 use std::sync::Arc;
+use std::{io, mem};
 
 use super::pd::Pd;
 
-use anyhow;
+use anyhow::Result;
 use rdma_sys::*;
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct MrInner<'a> {
+struct MrInner<'mem> {
     pd: Pd,
     mr: NonNull<ibv_mr>,
-    marker: PhantomData<&'a [u8]>,
+    marker: PhantomData<&'mem [u8]>,
 }
 
 unsafe impl Send for MrInner<'_> {}
@@ -44,15 +44,43 @@ pub struct Mr<'mem> {
 }
 
 impl<'mem> Mr<'mem> {
+    /// Register a memory region with the given protection domain.
+    ///
+    /// *Memory region* is an RDMA concept representing a handle to a
+    /// registry of a contiguous *virtual memory area*. In other words,
+    /// *region* and *area* are different things.
+    ///
+    /// This function is intentionally named `reg` instead of `new` to avoid
+    /// the possible confusion that the created `Mr` holds the ownership
+    /// of the memory area and that it will deallocate the memory when dropped
+    /// (*actually, it won't!*). In fact, the `Mr` only acquires its lifetime
+    /// and ensures that the memory area outlives the `Mr`.
+    ///
+    /// The memory region is registered with the following access flags:
+    /// - `IBV_ACCESS_LOCAL_WRITE` for recv,
+    /// - `IBV_ACCESS_REMOTE_WRITE` for remote RDMA write,
+    /// - `IBV_ACCESS_REMOTE_READ` for remote RDMA read, and
+    /// - `IBV_ACCESS_REMOTE_ATOMIC` for remote atomics.
+    ///
+    /// **NOTE:** although non-64-bit machines can hardly be seen nowadays, if
+    /// you managed to run this crate on one, this function will error as remote
+    /// memory addresses are represented by the `u64` type.
+    pub fn reg(pd: Pd, buf: &'mem [u8]) -> Result<Self> {
+        unsafe { Self::reg_with_ref(pd, buf.as_ptr() as *mut u8, buf.len(), buf) }
+    }
+
     /// Register a memory region with the given protection domain and a raw
     /// pointer. An extra lifetime provider is required to get the lifetime
     /// parameter for the created instance.
-    pub fn reg_with_ref<Ref: ?Sized>(
+    ///
+    /// The caller must ensure that the memory area `[addr..(addr + len))`
+    /// outlives the lifetime provided by the `_marker`.
+    pub unsafe fn reg_with_ref(
         pd: Pd,
         addr: *mut u8,
         len: usize,
-        _marker: &'mem Ref,
-    ) -> anyhow::Result<Self> {
+        _marker: &'mem impl ?Sized,
+    ) -> Result<Self> {
         if mem::size_of::<usize>() != mem::size_of::<u64>() {
             return Err(anyhow::anyhow!("non-64-bit platforms are not supported"));
         }
@@ -68,39 +96,18 @@ impl<'mem> Mr<'mem> {
                     | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
                     .0 as i32,
             )
-        })
-        .ok_or_else(|| anyhow::anyhow!("ibv_reg_mr failed: {}", std::io::Error::last_os_error()))?;
-        Ok(Self {
-            inner: Arc::new(MrInner {
-                pd,
-                mr,
-                marker: PhantomData::<&'mem [u8]>,
-            }),
-        })
-    }
+        });
 
-    /// Register a memory region with the given protection domain.
-    ///
-    /// *Memory region* is an RDMA concept representing a handle to a
-    /// registry of a contiguous *virtual memory area*. In other words,
-    /// *region* and *area* are different things.
-    ///
-    /// This function is intentionally named `reg` instead of `new` to avoid
-    /// the possible confusion that the created `Mr` holds the ownership
-    /// of the memory area and that it will deallocate the memory when dropped
-    /// (*actually, it won't!*).
-    ///
-    /// The memory region is registered with the following access flags:
-    /// - `IBV_ACCESS_LOCAL_WRITE` for recv,
-    /// - `IBV_ACCESS_REMOTE_WRITE` for remote RDMA write,
-    /// - `IBV_ACCESS_REMOTE_READ` for remote RDMA read, and
-    /// - `IBV_ACCESS_REMOTE_ATOMIC` for remote atomics.
-    ///
-    /// **NOTE:** although non-64-bit machines can hardly be seen nowadays, if
-    /// you managed to run this crate on one, this function will error as remote
-    /// memory addresses are represented by the `u64` type.
-    pub fn reg(pd: Pd, buf: &'mem [u8]) -> anyhow::Result<Self> {
-        Self::reg_with_ref(pd, buf.as_ptr() as *mut u8, buf.len(), buf)
+        match mr {
+            Some(mr) => Ok(Self {
+                inner: Arc::new(MrInner {
+                    pd,
+                    mr,
+                    marker: PhantomData::<&'mem [u8]>,
+                }),
+            }),
+            None => Err(anyhow::anyhow!(io::Error::last_os_error())),
+        }
     }
 
     /// Get the underlying `ibv_mr` structure.
@@ -153,7 +160,7 @@ impl<'mem> Mr<'mem> {
     /// Get a memory region slice from a pointer inside the memory area
     /// and a specified length. The behavior is undefined if the pointer
     /// is not contained within the MR or the specified slice
-    /// `(ptr .. (ptr + len))` is out of bounds.
+    /// `(ptr..(ptr + len))` is out of bounds.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
         let offset = ptr as usize - self.addr() as usize;
@@ -218,7 +225,7 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
 
     /// Get a memory region slice from a pointer inside the represented memory
     /// area slice and a specified length. The behavior is undefined if the
-    /// pointer is not contained within this slice or `(ptr .. (ptr + len))`
+    /// pointer is not contained within this slice or `(ptr..(ptr + len))`
     /// is out of bounds with regard to this slice.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice<'a, 'mem> {
@@ -235,5 +242,15 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
             self.mr,
             (self.range.start + r.start)..(self.range.start + r.end),
         )
+    }
+}
+
+impl From<&MrSlice<'_, '_>> for ibv_sge {
+    fn from(slice: &MrSlice<'_, '_>) -> Self {
+        Self {
+            addr: slice.addr() as u64,
+            length: slice.len() as u32,
+            lkey: slice.mr.lkey(),
+        }
     }
 }

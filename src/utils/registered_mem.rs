@@ -30,7 +30,8 @@ impl RegisteredMem {
     pub fn new(pd: Pd, len: usize) -> Result<Self> {
         // This should use the global allocator
         let buf = vec![0u8; len].into_boxed_slice();
-        let mr = Mr::reg_with_ref(pd, buf.as_ptr() as *mut _, buf.len(), &PhantomData::<()>)?;
+        let mr =
+            unsafe { Mr::reg_with_ref(pd, buf.as_ptr() as *mut _, buf.len(), &PhantomData::<()>)? };
 
         Ok(Self { mr, buf })
     }
@@ -69,7 +70,7 @@ impl RegisteredMem {
 
     /// Get a memory region slice from a pointer inside the represented memory
     /// area slice and a specified length. The behavior is undefined if the
-    /// pointer is not contained within this slice or `(ptr .. (ptr + len))`
+    /// pointer is not contained within this slice or `(ptr..(ptr + len))`
     /// is out of bounds with regard to this slice.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {

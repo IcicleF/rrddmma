@@ -363,7 +363,7 @@ impl Cq {
         let cq = NonNull::new(unsafe {
             ibv_create_cq(ctx.as_ptr(), depth, ptr::null_mut(), ptr::null_mut(), 0)
         })
-        .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
+        .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
 
         Ok(Self {
             inner: Arc::new(CqInner { ctx, cq }),
