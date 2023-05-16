@@ -183,7 +183,7 @@ impl Cluster {
         &'a self,
         pd: &'b Pd,
         num_links: usize,
-    ) -> impl iter::Iterator<Item = (usize, Vec<(Qp, QpPeer)>)> + 'a {
+    ) -> impl iter::Iterator<Item = (usize, Vec<Qp>)> + 'a {
         fn pow2_roundup(x: usize) -> usize {
             let mut n = 1;
             while n < x {
@@ -210,7 +210,7 @@ struct ConnectionIter<'a, 'b> {
 }
 
 impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
-    type Item = (usize, Vec<(Qp, QpPeer)>);
+    type Item = (usize, Vec<Qp>);
 
     fn next(&mut self) -> Option<Self::Item> {
         fn progress_iter<'a, 'b>(this: &mut ConnectionIter<'a, 'b>) -> Option<usize> {
@@ -250,9 +250,8 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
             Barrier::wait(self.cluster);
             return None;
         }
-        let ret = qps.into_iter().zip(ret.unwrap()).collect();
 
         Barrier::wait(self.cluster);
-        Some((peer_id, ret))
+        Some((peer_id, qps))
     }
 }
