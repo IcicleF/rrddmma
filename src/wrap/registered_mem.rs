@@ -25,8 +25,7 @@ pub struct RegisteredMem {
 }
 
 impl RegisteredMem {
-    /// Allocate memory with the given length and register a memory region on
-    /// it.
+    /// Allocate memory with the given length and register MR on it.
     pub fn new(pd: Pd, len: usize) -> Result<Self> {
         // This should use the global allocator
         let buf = vec![0u8; len].into_boxed_slice();
@@ -37,7 +36,7 @@ impl RegisteredMem {
     }
 
     /// Allocate memory that shares the same length and content with the provided
-    /// slice and register a memory region on it.
+    /// slice, and then register MR on it.
     pub fn new_with_content(pd: Pd, content: &[u8]) -> Result<Self> {
         let mut ret = Self::new(pd, content.len())?;
         ret.buf.copy_from_slice(content);

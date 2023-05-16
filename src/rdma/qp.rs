@@ -541,6 +541,7 @@ impl Qp {
         &self,
         local: &[MrSlice],
         peer: Option<&QpPeer>,
+        imm: Option<u32>,
         wr_id: u64,
         signal: bool,
         inline: bool,
@@ -556,9 +557,15 @@ impl Qp {
                 sgl.as_mut_ptr()
             },
             num_sge: local.len() as i32,
-            opcode: ibv_wr_opcode::IBV_WR_SEND,
+            opcode: imm.is_none().select(
+                ibv_wr_opcode::IBV_WR_SEND,
+                ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
+            ),
             send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
                 | inline.select(ibv_send_flags::IBV_SEND_INLINE.0, 0),
+            imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
+                imm_data: imm.unwrap_or(0),
+            },
             ..wr
         };
         if let Some(peer) = peer {
@@ -636,11 +643,10 @@ impl Qp {
                 sgl.as_mut_ptr()
             },
             num_sge: local.len() as i32,
-            opcode: if imm.is_none() {
-                ibv_wr_opcode::IBV_WR_RDMA_WRITE
-            } else {
-                ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM
-            },
+            opcode: imm.is_none().select(
+                ibv_wr_opcode::IBV_WR_RDMA_WRITE,
+                ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
+            ),
             send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
                 imm_data: imm.unwrap_or(0),
