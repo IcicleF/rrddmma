@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::context::Context;
 
-use anyhow;
+use anyhow::{Context as _, Result};
 use rdma_sys::*;
 
 #[allow(dead_code)]
@@ -35,9 +35,10 @@ pub struct Pd {
 
 impl Pd {
     /// Allocate a protection domain for the given RDMA device context.
-    pub fn new(ctx: Context) -> anyhow::Result<Self> {
+    pub fn new(ctx: Context) -> Result<Self> {
         let pd = NonNull::new(unsafe { ibv_alloc_pd(ctx.as_ptr()) })
-            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
+            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))
+            .with_context(|| "failed to create protection domain")?;
 
         Ok(Self {
             inner: Arc::new(PdInner { ctx, pd }),
@@ -62,7 +63,7 @@ mod tests {
     #[test]
     fn test_alloc() {
         let ctx = Context::open(Some("mlx5_0"), 1, 0).unwrap();
-        let pd = Pd::new(&ctx).unwrap();
+        let pd = Pd::new(ctx.clone()).unwrap();
         assert_eq!(pd.context().as_ptr(), ctx.as_ptr());
     }
 }

@@ -121,7 +121,7 @@ impl Connecter {
     }
 
     /// Connect a QP with the remote peer.
-    pub fn connect(&self, qp: &Qp) -> Result<QpPeer> {
+    pub fn connect(&self, qp: &Qp) -> Result<Option<QpPeer>> {
         if self.stream.is_none() {
             return Err(anyhow::anyhow!("no connection established"));
         }
@@ -146,15 +146,20 @@ impl Connecter {
             let buf = stream_read(&mut stream)?;
             serde_json::from_slice::<QpEndpoint>(buf.as_slice())?
         };
+
         qp.connect(&ep)?;
-        QpPeer::new(qp.pd(), ep)
+        if qp.qp_type() == QpType::RC {
+            Ok(None)
+        } else {
+            QpPeer::new(qp.pd(), ep).map(|peer| Some(peer))
+        }
     }
 
     /// Connect a list of QPs with the remote peer.
     ///
     /// It is expected that the opponent side calls this method simultaneously
     /// with a same number of QPs.
-    pub fn connect_many(&self, qps: &Vec<Qp>) -> Result<Vec<QpPeer>> {
+    pub fn connect_many(&self, qps: &Vec<Qp>) -> Result<Vec<Option<QpPeer>>> {
         if self.stream.is_none() {
             return Err(anyhow::anyhow!("no connection established"));
         }
@@ -183,15 +188,21 @@ impl Connecter {
             serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?
         };
 
+        // Remote side must have the same number of QPs
         if eps.len() != qps.len() {
             return Err(anyhow::anyhow!("QP number mismatch"));
         }
+
         let peers = eps
             .into_iter()
             .zip(qps)
             .map(|(ep, qp)| {
                 qp.connect(&ep).unwrap();
-                QpPeer::new(qp.pd(), ep).unwrap()
+                if qp.qp_type() == QpType::RC {
+                    None
+                } else {
+                    Some(QpPeer::new(qp.pd(), ep).unwrap())
+                }
             })
             .collect::<Vec<_>>();
         Ok(peers)

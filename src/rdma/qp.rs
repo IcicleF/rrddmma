@@ -8,8 +8,9 @@ use super::mr::*;
 use super::pd::Pd;
 use super::remote_mem::*;
 use super::wr::*;
+use crate::utils::interop::*;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use rdma_sys::*;
 
 /// Queue pair type.
@@ -261,6 +262,14 @@ pub struct QpPeer {
 
 unsafe impl Sync for QpPeer {}
 
+impl fmt::Debug for QpPeer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("QpPeer")
+            .field("endpoint", &self.ep)
+            .finish()
+    }
+}
+
 impl QpPeer {
     pub fn new(pd: Pd, ep: QpEndpoint) -> Result<Self> {
         let mut ah_attr = ibv_ah_attr {
@@ -279,7 +288,8 @@ impl QpPeer {
             port_num: ep.port_num,
         };
         let ah = NonNull::new(unsafe { ibv_create_ah(pd.as_ptr(), &mut ah_attr) })
-            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
+            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))
+            .with_context(|| "failed to create address handle")?;
         Ok(QpPeer { ah, ep })
     }
 }
@@ -345,7 +355,8 @@ impl Qp {
         let qp = NonNull::new(unsafe {
             ibv_create_qp(pd.as_ptr(), &mut ibv_qp_init_attr::from(init_attr.clone()))
         })
-        .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
+        .ok_or(anyhow::anyhow!(io::Error::last_os_error()))
+        .with_context(|| "failed to create queue pair")?;
         Ok(Qp {
             inner: Arc::new(QpInner { pd, qp, init_attr }),
         })
@@ -491,7 +502,7 @@ impl Qp {
     }
 
     /// Establish connection with the remote endpoint.
-    /// Performs no-op if the QP type is UD.
+    /// If the QP type is UD, only modify the QP to RTS.
     pub fn connect(&self, ep: &QpEndpoint) -> Result<()> {
         if self.state() == QpState::Reset {
             self.modify_reset_to_init(ep)?;
@@ -696,7 +707,7 @@ impl Qp {
             ));
         }
 
-        let mut sgl = [ibv_sge::from(local)];
+        let mut sgl = [ibv_sge::from(local.clone())];
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
             wr_id,
@@ -754,7 +765,7 @@ impl Qp {
             ));
         }
 
-        let mut sgl = [ibv_sge::from(local)];
+        let mut sgl = [ibv_sge::from(local.clone())];
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
             wr_id,
@@ -821,26 +832,8 @@ impl Qp {
 
 #[inline]
 pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
-    slices.iter().map(|slice| ibv_sge::from(slice)).collect()
-}
-
-// Carbon language is good at expressing this kind of thing :)
-// so let's just borrow this from it!
-trait Select {
-    fn select<T>(self, a: T, b: T) -> T;
-}
-
-impl Select for bool {
-    #[inline]
-    fn select<T>(self, a: T, b: T) -> T {
-        if self {
-            a
-        } else {
-            b
-        }
-    }
-}
-
-fn from_c_ret(ret: i32) -> Result<()> {
-    (ret == 0).select(Ok(()), Err(anyhow::anyhow!(io::Error::last_os_error())))
+    slices
+        .iter()
+        .map(|slice| ibv_sge::from(slice.clone()))
+        .collect()
 }

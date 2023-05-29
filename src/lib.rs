@@ -31,7 +31,10 @@
 //!
 //! [`rdma-sys`]: https://docs.rs/rdma-sys/latest/rdma_sys/
 
-/// RDMA data-plane utilities.
+/// Shared util functions.
+mod utils;
+
+/// RDMA data-plane functionalities.
 /// Not to be publicly exposed, instead `pub use` necessary items.
 mod rdma;
 

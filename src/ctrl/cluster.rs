@@ -161,7 +161,7 @@ impl Cluster {
         self.peers.get(id).cloned()
     }
 
-    /// Establish reliable connections (RCs) with all nodes in the cluster.
+    /// Create [`Qp`]s and connect with all nodes in the cluster.
     /// Return an iterator that yields a `Vec` of `Qp`s and `QpPeer`s for
     /// each node. The `Vec`'s size is specified by `num_link`.
     ///
@@ -179,11 +179,12 @@ impl Cluster {
     /// iterate forwards concurrently. They will synchronize with each other
     /// using `Barrier`.
     #[inline]
-    pub fn connect_all_rc<'a, 'b: 'a>(
+    pub fn connect_all<'a, 'b: 'a>(
         &'a self,
         pd: &'b Pd,
         num_links: usize,
-    ) -> impl iter::Iterator<Item = (usize, Vec<Qp>)> + 'a {
+        qp_type: QpType,
+    ) -> impl iter::Iterator<Item = (usize, Vec<(Qp, Option<QpPeer>)>)> + 'a {
         fn pow2_roundup(x: usize) -> usize {
             let mut n = 1;
             while n < x {
@@ -197,6 +198,7 @@ impl Cluster {
             n: pow2_roundup(self.size()),
             i: 1,
             num_links,
+            qp_type,
         }
     }
 }
@@ -207,10 +209,11 @@ struct ConnectionIter<'a, 'b> {
     n: usize,
     i: usize,
     num_links: usize,
+    qp_type: QpType,
 }
 
 impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
-    type Item = (usize, Vec<Qp>);
+    type Item = (usize, Vec<(Qp, Option<QpPeer>)>);
 
     fn next(&mut self) -> Option<Self::Item> {
         fn progress_iter<'a, 'b>(this: &mut ConnectionIter<'a, 'b>) -> Option<usize> {
@@ -230,6 +233,7 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
             peer_id = progress_iter(self)?;
         }
 
+        // Create QPs
         let qps = (0..self.num_links)
             .map(|_| {
                 let send_cq = Cq::new(self.pd.context(), Cq::DEFAULT_CQ_DEPTH).unwrap();
@@ -242,16 +246,20 @@ impl<'a, 'b> iter::Iterator for ConnectionIter<'a, 'b> {
                 qp
             })
             .collect::<Vec<_>>();
-        let ret = Connecter::within_cluster(self.cluster, peer_id)
+
+        // Connect the QPs with the current peer
+        let peers = Connecter::within_cluster(self.cluster, peer_id)
             .unwrap()
             .connect_many(&qps);
-        if let Err(e) = ret {
+        if let Err(e) = peers {
             log::error!("rrddmma: failed to connect to peer {}: {:?}", peer_id, e);
             Barrier::wait(self.cluster);
             return None;
         }
 
+        let ret = qps.into_iter().zip(peers.unwrap()).collect::<Vec<_>>();
+
         Barrier::wait(self.cluster);
-        Some((peer_id, qps))
+        Some((peer_id, ret))
     }
 }

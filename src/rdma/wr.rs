@@ -1,11 +1,21 @@
 use std::marker::PhantomData;
-use std::{mem, ptr};
+use std::{fmt, mem, ptr};
 
 use rdma_sys::*;
 
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
 use super::remote_mem::*;
+
+/// This type has the same memory layout with [`ibv_sge`] but with a [`Debug`]
+/// implementation.
+#[derive(Debug)]
+#[repr(C)]
+struct IbvSgeDebuggable {
+    pub addr: u64,
+    pub length: u32,
+    pub lkey: u32,
+}
 
 /// Wrapper of basic parameters of an RDMA work request.
 struct WrBase<'mem> {
@@ -31,6 +41,7 @@ struct WrBase<'mem> {
 ///
 /// **NOTE:** this type intentionally discriminates RDMA send via RC and UD QPs.
 /// This is to improve performance when the user only uses RC.
+#[derive(Debug)]
 pub enum SendWrDetails {
     /// Send via RC QPs requires specifying an optional immediate and whether
     /// to inline.
@@ -66,6 +77,23 @@ pub enum SendWrDetails {
 /// sized and aligned. However, there won't be an UB even if you don't:
 /// the RDMA hardware will report an error for you.
 pub struct SendWr<'a>(WrBase<'a>, SendWrDetails);
+
+impl fmt::Debug for SendWr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sge = self
+            .0
+            .local
+            .iter()
+            .map(|sge| unsafe { mem::transmute(*sge) })
+            .collect::<Vec<IbvSgeDebuggable>>();
+        f.debug_struct("SendWr")
+            .field("sge", &sge)
+            .field("wr_id", &self.0.wr_id)
+            .field("signaled", &self.0.signal)
+            .field("details", &self.1)
+            .finish()
+    }
+}
 
 impl<'a> SendWr<'a> {
     /// Create a new send work request with basic parameters and the details
@@ -185,6 +213,22 @@ impl<'a> SendWr<'a> {
 /// Use this type when you want to post multiple recv work requests to a
 /// queue pair at once (which can reduce doorbell ringing overheads).
 pub struct RecvWr<'a>(WrBase<'a>);
+
+impl fmt::Debug for RecvWr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sge = self
+            .0
+            .local
+            .iter()
+            .map(|sge| unsafe { mem::transmute(*sge) })
+            .collect::<Vec<IbvSgeDebuggable>>();
+        f.debug_struct("RecvWr")
+            .field("sge", &sge)
+            .field("wr_id", &self.0.wr_id)
+            .field("signaled", &self.0.signal)
+            .finish()
+    }
+}
 
 impl<'a> RecvWr<'a> {
     pub fn new(local: &[MrSlice<'a, '_>], wr_id: u64, signal: bool) -> Self {

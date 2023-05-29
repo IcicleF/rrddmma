@@ -210,7 +210,7 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
         &self.mr
     }
 
-    /// Sub-slicing this slice. Return `None` if the range is out of bounds.
+    /// Sub-slice this slice. Return `None` if the range is out of bounds.
     #[inline]
     pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice<'a, 'mem>> {
         if r.start <= r.end && r.end <= self.len() {
@@ -243,14 +243,34 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
             (self.range.start + r.start)..(self.range.start + r.end),
         )
     }
+
+    /// Resize the memory region slice to the specified length. Return whether
+    /// the resize was successful.
+    #[must_use = "must check if the resize was successful"]
+    #[inline]
+    pub fn resize(&mut self, len: usize) -> bool {
+        let max_len = self.mr.len() - self.range.start;
+        if len <= max_len {
+            self.range.end = self.range.start + len;
+            true
+        } else {
+            false
+        }
+    }
 }
 
-impl From<&MrSlice<'_, '_>> for ibv_sge {
-    fn from(slice: &MrSlice<'_, '_>) -> Self {
+impl From<MrSlice<'_, '_>> for ibv_sge {
+    fn from(slice: MrSlice<'_, '_>) -> Self {
         Self {
             addr: slice.addr() as u64,
             length: slice.len() as u32,
             lkey: slice.mr.lkey(),
         }
+    }
+}
+
+impl From<MrSlice<'_, '_>> for NonNull<u8> {
+    fn from(slice: MrSlice<'_, '_>) -> Self {
+        unsafe { NonNull::new_unchecked(slice.addr()) }
     }
 }

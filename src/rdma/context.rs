@@ -4,8 +4,9 @@ use std::{fmt, io, mem};
 
 use super::device::DeviceList;
 use super::gid::Gid;
+use crate::utils::interop::*;
 
-use anyhow;
+use anyhow::{Context as _, Result};
 use rdma_sys::*;
 
 #[allow(dead_code)]
@@ -55,7 +56,7 @@ impl Context {
     /// Open a device and query the related attributes (device and port).
     ///
     /// If `dev_name` is `None`, the first device found is used. Otherwise, the device with the given name is used.
-    pub fn open(dev_name: Option<&str>, port_num: u8, gid_index: u8) -> anyhow::Result<Self> {
+    pub fn open(dev_name: Option<&str>, port_num: u8, gid_index: u8) -> Result<Self> {
         let dev_list = DeviceList::new()?;
         let dev = dev_list
             .iter()
@@ -70,7 +71,7 @@ impl Context {
             let mut dev_attr = unsafe { mem::zeroed() };
             let ret = unsafe { ibv_query_device(ctx.as_ptr(), &mut dev_attr) };
             if ret != 0 {
-                return Err(anyhow::anyhow!(io::Error::last_os_error()));
+                return from_c_err(ret).with_context(|| "failed to query device attributes");
             }
             dev_attr
         };
@@ -82,7 +83,7 @@ impl Context {
             let mut port_attr = unsafe { mem::zeroed() };
             let ret = unsafe { ___ibv_query_port(ctx.as_ptr(), port_num, &mut port_attr) };
             if ret != 0 {
-                return Err(anyhow::anyhow!(io::Error::last_os_error()));
+                return from_c_err(ret).with_context(|| "failed to query port attributes");
             }
             port_attr
         };
@@ -94,7 +95,7 @@ impl Context {
             let mut gid = unsafe { mem::zeroed() };
             let ret = unsafe { ibv_query_gid(ctx.as_ptr(), port_num, gid_index as i32, &mut gid) };
             if ret != 0 {
-                return Err(anyhow::anyhow!(io::Error::last_os_error()));
+                return from_c_err(ret).with_context(|| "failed to query GID");
             }
             Gid::from(gid)
         };
