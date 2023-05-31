@@ -355,6 +355,9 @@ pub struct Cq {
 }
 
 impl Cq {
+    /// The default short CQ depth (e.g., for a single client).
+    pub const DEFAULT_CQ_SHORT_DEPTH: i32 = 16;
+
     /// The default CQ depth.
     pub const DEFAULT_CQ_DEPTH: i32 = 128;
 

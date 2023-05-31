@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Bound, Range, RangeBounds};
 
 use super::mr::*;
 use rdma_sys::*;
@@ -38,9 +38,24 @@ impl RemoteMem {
     /// Get a remote memory region slice that represents the specified range of
     /// the remote memory area. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: Range<usize>) -> Option<Self> {
-        if r.start <= r.end && r.end <= self.len {
-            Some(unsafe { self.get_slice_unchecked(r) })
+    pub fn get_slice(&self, r: impl RangeBounds<usize>) -> Option<Self> {
+        let start = match r.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match r.end_bound() {
+            Bound::Included(&e) => e + 1,
+            Bound::Excluded(&e) => e,
+            Bound::Unbounded => self.len,
+        };
+
+        if start <= end && end <= self.len {
+            Some(Self {
+                addr: self.addr + start as u64,
+                len: end - start,
+                rkey: self.rkey,
+            })
         } else {
             None
         }
@@ -60,10 +75,20 @@ impl RemoteMem {
     /// the remote memory area. The behavior is undefined if the range is out of
     /// bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> Self {
+    pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> Self {
+        let start = match r.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match r.end_bound() {
+            Bound::Included(&e) => e + 1,
+            Bound::Excluded(&e) => e,
+            Bound::Unbounded => self.len,
+        };
         Self {
-            addr: self.addr + r.start as u64,
-            len: r.end - r.start,
+            addr: self.addr + start as u64,
+            len: end - start,
             rkey: self.rkey,
         }
     }

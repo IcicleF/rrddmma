@@ -8,7 +8,7 @@ use super::mr::*;
 use super::pd::Pd;
 use super::remote_mem::*;
 use super::wr::*;
-use crate::utils::interop::*;
+use crate::utils::{interop::*, select::*};
 
 use anyhow::{Context as _, Result};
 use rdma_sys::*;
@@ -17,16 +17,16 @@ use rdma_sys::*;
 #[derive(fmt::Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QpType {
     /// Reliable connection
-    RC,
+    Rc,
     /// Unreliable datagram
-    UD,
+    Ud,
 }
 
 impl From<QpType> for u32 {
     fn from(qp_type: QpType) -> Self {
         match qp_type {
-            QpType::RC => ibv_qp_type::IBV_QPT_RC,
-            QpType::UD => ibv_qp_type::IBV_QPT_UD,
+            QpType::Rc => ibv_qp_type::IBV_QPT_RC,
+            QpType::Ud => ibv_qp_type::IBV_QPT_UD,
         }
     }
 }
@@ -34,8 +34,8 @@ impl From<QpType> for u32 {
 impl From<u32> for QpType {
     fn from(qp_type: u32) -> Self {
         match qp_type {
-            ibv_qp_type::IBV_QPT_RC => QpType::RC,
-            ibv_qp_type::IBV_QPT_UD => QpType::UD,
+            ibv_qp_type::IBV_QPT_RC => QpType::Rc,
+            ibv_qp_type::IBV_QPT_UD => QpType::Ud,
             _ => panic!("invalid qp type"),
         }
     }
@@ -204,7 +204,7 @@ impl QpInitAttr {
             send_cq: cq.clone(),
             recv_cq: cq,
             cap: QpCaps::default(),
-            qp_type: QpType::RC,
+            qp_type: QpType::Rc,
             sq_sig_all: true,
         }
     }
@@ -379,8 +379,8 @@ impl Qp {
     pub fn qp_type(&self) -> QpType {
         let ty = unsafe { (*self.inner.qp.as_ptr()).qp_type };
         match ty {
-            ibv_qp_type::IBV_QPT_RC => QpType::RC,
-            ibv_qp_type::IBV_QPT_UD => QpType::UD,
+            ibv_qp_type::IBV_QPT_RC => QpType::Rc,
+            ibv_qp_type::IBV_QPT_UD => QpType::Ud,
             _ => panic!("unknown qp type"),
         }
     }
@@ -426,7 +426,7 @@ impl Qp {
         attr.pkey_index = 0;
         attr.port_num = ep.port_num;
 
-        if self.qp_type() == QpType::RC {
+        if self.qp_type() == QpType::Rc {
             attr.qp_access_flags = (ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
                 | ibv_access_flags::IBV_ACCESS_REMOTE_READ
                 | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
@@ -446,7 +446,7 @@ impl Qp {
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE;
         attr.qp_state = ibv_qp_state::IBV_QPS_RTR;
 
-        if self.qp_type() == QpType::RC {
+        if self.qp_type() == QpType::Rc {
             let ctx = self.inner.pd.context();
 
             attr.path_mtu = ctx.active_mtu();
@@ -485,7 +485,7 @@ impl Qp {
         attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
         attr.sq_psn = ep.psn;
 
-        if self.qp_type() == QpType::RC {
+        if self.qp_type() == QpType::Rc {
             attr.max_rd_atomic = 16;
             attr.timeout = 14;
             attr.retry_cnt = 6;

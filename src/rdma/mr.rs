@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::marker::PhantomData;
-use std::ops::Range;
+use std::ops::{Bound, Range, RangeBounds};
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{io, mem};
@@ -149,9 +149,20 @@ impl<'mem> Mr<'mem> {
     /// Get a memory region slice that represents the specified range of
     /// the memory area. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice> {
-        if r.start <= r.end && r.end <= self.len() {
-            Some(MrSlice::new(self, r))
+    pub fn get_slice(&self, r: impl RangeBounds<usize>) -> Option<MrSlice> {
+        let start = match r.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match r.end_bound() {
+            Bound::Included(&e) => e + 1,
+            Bound::Excluded(&e) => e,
+            Bound::Unbounded => self.len(),
+        };
+
+        if start <= end && end <= self.len() {
+            Some(MrSlice::new(self, start..end))
         } else {
             None
         }
@@ -171,8 +182,19 @@ impl<'mem> Mr<'mem> {
     /// the memory area. The behavior is undefined if the range is out of
     /// bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice {
-        MrSlice::new(self, r)
+    pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice {
+        let start = match r.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match r.end_bound() {
+            Bound::Included(&e) => e + 1,
+            Bound::Excluded(&e) => e,
+            Bound::Unbounded => self.len(),
+        };
+
+        MrSlice::new(self, start..end)
     }
 }
 
@@ -212,11 +234,22 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
 
     /// Sub-slice this slice. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice<'a, 'mem>> {
-        if r.start <= r.end && r.end <= self.len() {
+    pub fn get_slice(&self, r: impl RangeBounds<usize>) -> Option<MrSlice<'a, 'mem>> {
+        let start = match r.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match r.end_bound() {
+            Bound::Included(&e) => e + 1,
+            Bound::Excluded(&e) => e,
+            Bound::Unbounded => self.len(),
+        };
+
+        if start <= end && end <= self.len() {
             Some(MrSlice::new(
                 self.mr,
-                (self.range.start + r.start)..(self.range.start + r.end),
+                (self.range.start + start)..(self.range.start + end),
             ))
         } else {
             None
@@ -237,10 +270,21 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
     /// the memory area within this memory slice. The behavior is undefined
     /// if the range is out of bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice<'a, 'mem> {
+    pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice<'a, 'mem> {
+        let start = match r.start_bound() {
+            Bound::Included(&s) => s,
+            Bound::Excluded(&s) => s + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match r.end_bound() {
+            Bound::Included(&e) => e + 1,
+            Bound::Excluded(&e) => e,
+            Bound::Unbounded => self.len(),
+        };
+
         MrSlice::new(
             self.mr,
-            (self.range.start + r.start)..(self.range.start + r.end),
+            (self.range.start + start)..(self.range.start + end),
         )
     }
 

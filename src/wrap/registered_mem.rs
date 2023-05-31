@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut, Range};
+use std::ops::{Deref, DerefMut, RangeBounds};
+use std::ptr;
 
 use anyhow::Result;
 
@@ -63,8 +64,16 @@ impl RegisteredMem {
 
     /// Sub-slicing this slice. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: Range<usize>) -> Option<MrSlice> {
+    pub fn get_slice(&self, r: impl RangeBounds<usize>) -> Option<MrSlice> {
         self.mr.get_slice(r)
+    }
+
+    /// Zero the allocated buffer.
+    #[inline]
+    pub fn clear(&mut self) {
+        unsafe {
+            ptr::write_bytes(self.buf.as_mut_ptr(), 0, self.buf.len());
+        }
     }
 
     /// Get a memory region slice from a pointer inside the represented memory
@@ -72,15 +81,15 @@ impl RegisteredMem {
     /// pointer is not contained within this slice or `(ptr..(ptr + len))`
     /// is out of bounds with regard to this slice.
     #[inline]
-    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
-        self.mr.get_slice_from_ptr(ptr, len)
+    pub unsafe fn get_slice_from_ptr(&self, pointer: *const u8, len: usize) -> MrSlice {
+        self.mr.get_slice_from_ptr(pointer, len)
     }
 
     /// Get a memory region slice that represents the specified range of the
     /// the memory area within this memory slice. The behavior is undefined
     /// if the range is out of bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: Range<usize>) -> MrSlice {
+    pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice {
         self.mr.get_slice_unchecked(r)
     }
 }

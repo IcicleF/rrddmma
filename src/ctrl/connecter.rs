@@ -148,7 +148,7 @@ impl Connecter {
         };
 
         qp.connect(&ep)?;
-        if qp.qp_type() == QpType::RC {
+        if qp.qp_type() == QpType::Rc {
             Ok(None)
         } else {
             QpPeer::new(qp.pd(), ep).map(|peer| Some(peer))
@@ -198,7 +198,7 @@ impl Connecter {
             .zip(qps)
             .map(|(ep, qp)| {
                 qp.connect(&ep).unwrap();
-                if qp.qp_type() == QpType::RC {
+                if qp.qp_type() == QpType::Rc {
                     None
                 } else {
                     Some(QpPeer::new(qp.pd(), ep).unwrap())
