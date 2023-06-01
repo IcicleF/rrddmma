@@ -568,12 +568,12 @@ impl Qp {
                 sgl.as_mut_ptr()
             },
             num_sge: local.len() as i32,
-            opcode: imm.is_none().select(
+            opcode: imm.is_none().select_val(
                 ibv_wr_opcode::IBV_WR_SEND,
                 ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
             ),
-            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
-                | inline.select(ibv_send_flags::IBV_SEND_INLINE.0, 0),
+            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
+                | inline.select_val(ibv_send_flags::IBV_SEND_INLINE.0, 0),
             imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
                 imm_data: imm.unwrap_or(0),
             },
@@ -616,7 +616,7 @@ impl Qp {
             },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_RDMA_READ,
-            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             wr: wr_t {
                 rdma: rdma_t::from(remote),
             },
@@ -654,11 +654,11 @@ impl Qp {
                 sgl.as_mut_ptr()
             },
             num_sge: local.len() as i32,
-            opcode: imm.is_none().select(
+            opcode: imm.is_none().select_val(
                 ibv_wr_opcode::IBV_WR_RDMA_WRITE,
                 ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
             ),
-            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
                 imm_data: imm.unwrap_or(0),
             },
@@ -715,7 +715,7 @@ impl Qp {
             sg_list: sgl.as_mut_ptr(),
             num_sge: 1,
             opcode: ibv_wr_opcode::IBV_WR_ATOMIC_CMP_AND_SWP,
-            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             wr: wr_t {
                 atomic: atomic_t {
                     compare_add: current,
@@ -773,7 +773,7 @@ impl Qp {
             sg_list: sgl.as_mut_ptr(),
             num_sge: 1,
             opcode: ibv_wr_opcode::IBV_WR_ATOMIC_FETCH_AND_ADD,
-            send_flags: signal.select(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             wr: wr_t {
                 atomic: atomic_t {
                     compare_add: add,

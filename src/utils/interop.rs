@@ -7,8 +7,8 @@ use super::select::*;
 #[inline(always)]
 pub(crate) fn from_c_ret(ret: i32) -> Result<()> {
     (ret == 0).select(
-        Ok(()),
-        Err(anyhow::anyhow!(io::Error::from_raw_os_error(ret))),
+        || Ok(()),
+        || Err(anyhow::anyhow!(io::Error::from_raw_os_error(ret))),
     )
 }
 

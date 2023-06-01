@@ -7,7 +7,6 @@ use local_ip_address::list_afinet_netifas;
 
 use super::{barrier::Barrier, connecter::Connecter};
 use crate::rdma::{cq::Cq, pd::Pd, qp::*};
-use crate::utils::select::*;
 
 fn is_my_ip(ip: &Ipv4Addr) -> bool {
     let my_ips = list_afinet_netifas().unwrap();
@@ -221,20 +220,22 @@ impl Cluster {
             connections.push(None);
         }
 
-        let shared_scq = share_send_cq.select(
+        let shared_scq = if share_send_cq {
             Some(Cq::new(
                 pd.context(),
                 Cq::DEFAULT_CQ_DEPTH * self.size() as i32,
-            )?),
-            None,
-        );
-        let shared_rcq = share_recv_cq.select(
+            )?)
+        } else {
+            None
+        };
+        let shared_rcq = if share_recv_cq {
             Some(Cq::new(
                 pd.context(),
                 Cq::DEFAULT_CQ_DEPTH * self.size() as i32,
-            )?),
-            None,
-        );
+            )?)
+        } else {
+            None
+        };
 
         for i in 1..n {
             let id = self.rank();
@@ -245,14 +246,16 @@ impl Cluster {
                 // Create QPs
                 let mut qps = Vec::with_capacity(num_links);
                 for _ in 0..num_links {
-                    let send_cq = share_send_cq.select(
-                        shared_scq.clone().unwrap(),
-                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?,
-                    );
-                    let recv_cq = share_recv_cq.select(
-                        shared_rcq.clone().unwrap(),
-                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?,
-                    );
+                    let send_cq = if share_send_cq {
+                        shared_scq.clone().unwrap()
+                    } else {
+                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?
+                    };
+                    let recv_cq = if share_recv_cq {
+                        shared_rcq.clone().unwrap()
+                    } else {
+                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?
+                    };
 
                     let qp = Qp::new(
                         pd.clone(),
@@ -334,13 +337,14 @@ impl Cluster {
             servers.push(None);
         }
 
-        let shared_rcq = share_recv_cq.select(
+        let shared_rcq = if share_recv_cq {
             Some(Cq::new(
                 pd.context(),
                 Cq::DEFAULT_CQ_DEPTH * self.size() as i32,
-            )?),
-            None,
-        );
+            )?)
+        } else {
+            None
+        };
 
         for i in 1..n {
             let id = self.rank();
@@ -359,10 +363,11 @@ impl Cluster {
                 };
                 let svr = {
                     let send_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
-                    let recv_cq = share_recv_cq.select(
-                        shared_rcq.clone().unwrap(),
-                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?,
-                    );
+                    let recv_cq = if share_recv_cq {
+                        shared_rcq.clone().unwrap()
+                    } else {
+                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?
+                    };
                     Qp::new(
                         pd.clone(),
                         QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::Rc, true),

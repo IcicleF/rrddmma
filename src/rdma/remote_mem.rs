@@ -1,4 +1,4 @@
-use std::ops::{Bound, Range, RangeBounds};
+use std::ops::{Bound, RangeBounds};
 
 use super::mr::*;
 use rdma_sys::*;
