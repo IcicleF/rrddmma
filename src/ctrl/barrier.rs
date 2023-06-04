@@ -44,7 +44,7 @@ impl Barrier {
             let mut stream = stream.unwrap();
 
             let mut buf = [0; 1];
-            stream.read(&mut buf).unwrap();
+            stream.read_exact(&mut buf).unwrap();
         }
     }
 

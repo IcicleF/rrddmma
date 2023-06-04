@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::ops::{Bound, Range, RangeBounds};
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::{io, mem};
+use std::{fmt, io, mem};
 
 use super::pd::Pd;
 
@@ -15,7 +15,7 @@ use rdma_sys::*;
 struct MrInner<'mem> {
     pd: Pd,
     mr: NonNull<ibv_mr>,
-    marker: PhantomData<&'mem [u8]>,
+    marker: PhantomData<&'mem mut [u8]>,
 }
 
 unsafe impl Send for MrInner<'_> {}
@@ -37,10 +37,16 @@ impl Drop for MrInner<'_> {
 /// A memory region is a virtual memory space registered to the RDMA device.
 /// The registered memory itself does not belong to this type, but it must
 /// outlive this type's lifetime (`'mem`) or there can be dangling pointers.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[repr(transparent)]
 pub struct Mr<'mem> {
     inner: Arc<MrInner<'mem>>,
+}
+
+impl fmt::Debug for Mr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("Mr<{:p}>", self.as_ptr()))
+    }
 }
 
 impl<'mem> Mr<'mem> {
@@ -103,7 +109,7 @@ impl<'mem> Mr<'mem> {
                 inner: Arc::new(MrInner {
                     pd,
                     mr,
-                    marker: PhantomData::<&'mem [u8]>,
+                    marker: PhantomData::<&'mem mut [u8]>,
                 }),
             }),
             None => Err(anyhow::anyhow!(io::Error::last_os_error())),

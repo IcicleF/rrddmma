@@ -255,10 +255,9 @@ impl Wc {
     /// - Otherwise, return an error.
     #[inline]
     pub fn result(&self) -> Result<usize> {
-        if self.status() == WcStatus::Success {
-            Ok(self.0.byte_len as usize)
-        } else {
-            Err(self.status().into())
+        match self.status() {
+            WcStatus::Success => Ok(self.0.byte_len as usize),
+            _ => Err(self.status().into()),
         }
     }
 
@@ -355,9 +354,6 @@ pub struct Cq {
 }
 
 impl Cq {
-    /// The default short CQ depth (e.g., for a single client).
-    pub const DEFAULT_CQ_SHORT_DEPTH: i32 = 16;
-
     /// The default CQ depth.
     pub const DEFAULT_CQ_DEPTH: i32 = 128;
 
@@ -401,7 +397,7 @@ impl Cq {
         };
 
         if num < 0 {
-            Err(anyhow::anyhow!(io::Error::last_os_error()))
+            Err(anyhow::anyhow!(io::Error::from_raw_os_error(num)))
         } else {
             Ok(num)
         }
@@ -417,9 +413,6 @@ impl Cq {
         let mut polled = 0;
         while polled < num {
             let n = self.poll(&mut wc[polled..])?;
-            if n == 0 {
-                continue;
-            }
             polled += n as usize;
         }
         Ok(())

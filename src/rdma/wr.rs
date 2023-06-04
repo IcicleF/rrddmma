@@ -3,6 +3,8 @@ use std::{fmt, mem, ptr};
 
 use rdma_sys::*;
 
+use crate::utils::select::Select;
+
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
 use super::remote_mem::*;
@@ -42,28 +44,62 @@ struct WrBase<'mem> {
 /// **NOTE:** this type intentionally discriminates RDMA send via RC and UD QPs.
 /// This is to improve performance when the user only uses RC.
 #[derive(Debug)]
-pub enum SendWrDetails {
-    /// Send via RC QPs requires specifying an optional immediate and whether
+pub enum SendWrDetails<'a> {
+    /// Send via RC QP, requires specifying an optional immediate and whether
     /// to inline.
-    SendRc(Option<u32>, bool),
+    SendRc(
+        /// [`Some`] to send with an immediate value, or [`None`] to send without.
+        Option<u32>,
+        /// Indicate whether to inline the send.
+        bool,
+    ),
 
-    /// Send via UD QPs requires specifying the target, an optional immediate,
+    /// Send via UD QP, requires specifying the target, an optional immediate,
     /// and whether to inline.
-    SendUd(QpPeer, Option<u32>, bool),
+    SendUd(
+        /// The target QP.
+        &'a QpPeer,
+        /// [`Some`] to send with an immediate value, or [`None`] to send without.
+        Option<u32>,
+        /// Indicate whether to inline the send.
+        bool,
+    ),
 
-    /// Read requires a remote memory area to read from.
-    Read(RemoteMem),
+    /// Read, requires a remote memory area to read from.
+    Read(
+        /// The remote memory area to read from.
+        RemoteMem,
+    ),
 
-    /// Write requires a remote memory area to write to and an optional immediate.
-    Write(RemoteMem, Option<u32>),
+    /// Write, requires a remote memory area to write to and an optional immediate.
+    Write(
+        /// The remote memory area to write to.
+        RemoteMem,
+        /// [`Some`] to write with an immediate value, or [`None`] to write without.
+        Option<u32>,
+    ),
 
-    /// Atomic compare-and-swap requires a remote memory area to operate on, a
+    /// Atomic compare-and-swap, requires a remote memory area to operate on, a
     /// value to compare against, and a value to swap with.
-    CompareSwap(RemoteMem, u64, u64),
+    CompareSwap(
+        /// The remote memory area to operate on.
+        /// This must be an aligned 8B memory area.
+        RemoteMem,
+        /// The value to compare against.
+        u64,
+        /// The value to swap with.
+        u64,
+    ),
 
-    /// Atomic fetch-and-add requires a remote memory area to operate on and a
+    /// Atomic fetch-and-add, requires a remote memory area to operate on and a
     /// value to add.
-    FetchAdd(RemoteMem, u64),
+    FetchAdd(
+        /// The remote memory area to operate on.
+        /// This must be an aligned 8B memory area.
+        RemoteMem,
+        /// The value to add.
+        u64,
+    ),
 }
 
 /// Send work request.
@@ -76,9 +112,9 @@ pub enum SendWrDetails {
 /// 8B-aligned. It is your responsibility to ensure that they are properly
 /// sized and aligned. However, there won't be an UB even if you don't:
 /// the RDMA hardware will report an error for you.
-pub struct SendWr<'a>(WrBase<'a>, SendWrDetails);
+pub struct SendWr<'a, 'b>(WrBase<'a>, SendWrDetails<'b>);
 
-impl fmt::Debug for SendWr<'_> {
+impl fmt::Debug for SendWr<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let sge = self
             .0
@@ -95,14 +131,14 @@ impl fmt::Debug for SendWr<'_> {
     }
 }
 
-impl<'a> SendWr<'a> {
+impl<'a, 'b> SendWr<'a, 'b> {
     /// Create a new send work request with basic parameters and the details
     /// that specifies its concrete type.
     pub fn new(
         local: &[MrSlice<'a, '_>],
         wr_id: u64,
         signal: bool,
-        additions: SendWrDetails,
+        additions: SendWrDetails<'b>,
     ) -> Self {
         Self(
             WrBase {
@@ -123,11 +159,10 @@ impl<'a> SendWr<'a> {
         wr.wr_id = self.0.wr_id;
         wr.sg_list = self.0.local.as_ptr() as *mut _;
         wr.num_sge = self.0.local.len() as i32;
-        wr.send_flags = if self.0.signal {
-            ibv_send_flags::IBV_SEND_SIGNALED.0
-        } else {
-            0
-        };
+        wr.send_flags = self
+            .0
+            .signal
+            .select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0);
         wr.next = ptr::null_mut();
 
         // Fill in work request details
@@ -149,7 +184,7 @@ impl<'a> SendWr<'a> {
             SendWrDetails::SendRc(imm, inl) => {
                 fill_opcode_with_imm(
                     &mut wr,
-                    &imm,
+                    imm,
                     ibv_wr_opcode::IBV_WR_SEND,
                     ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
                 );
@@ -158,10 +193,10 @@ impl<'a> SendWr<'a> {
                 }
             }
             SendWrDetails::SendUd(peer, imm, inl) => {
-                wr.wr.ud = ud_t::from(peer);
+                wr.wr.ud = ud_t::from(*peer);
                 fill_opcode_with_imm(
                     &mut wr,
-                    &imm,
+                    imm,
                     ibv_wr_opcode::IBV_WR_SEND,
                     ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
                 );
@@ -177,7 +212,7 @@ impl<'a> SendWr<'a> {
                 wr.wr.rdma = rdma_t::from(remote);
                 fill_opcode_with_imm(
                     &mut wr,
-                    &imm,
+                    imm,
                     ibv_wr_opcode::IBV_WR_RDMA_WRITE,
                     ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
                 );

@@ -3,15 +3,19 @@ use std::net::*;
 use std::time::Duration;
 
 use super::cluster::Cluster;
-use crate::rdma::{mr::*, qp::*, remote_mem::*};
-use anyhow::Result;
+use crate::rdma::{qp::*, remote_mem::*};
+use anyhow::{Context as _, Result};
 
 fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> Result<()> {
-    stream.write(&buf.len().to_le_bytes())?;
+    stream
+        .write(&buf.len().to_le_bytes())
+        .with_context(|| "failed to write message length")?;
 
     let mut written = 0;
     while written < buf.len() {
-        let len = stream.write(&buf[written..])?;
+        let len = stream
+            .write(&buf[written..])
+            .with_context(|| format!("failed when writing bytes [{}..]", written))?;
         written += len;
     }
     Ok(())
@@ -19,11 +23,15 @@ fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> Result<()> {
 
 fn stream_read(stream: &mut &TcpStream) -> Result<Vec<u8>> {
     let mut buf = [0; std::mem::size_of::<usize>()];
-    stream.read_exact(&mut buf)?;
+    stream
+        .read_exact(&mut buf)
+        .with_context(|| "failed to read message length")?;
     let len = usize::from_le_bytes(buf);
 
     let mut buf = vec![0; len];
-    stream.read_exact(&mut buf)?;
+    stream
+        .read_exact(&mut buf)
+        .with_context(|| "failed when reading bytes")?;
     Ok(buf)
 }
 
@@ -62,11 +70,12 @@ impl Connecter {
     pub fn new_on_port(with: Option<Ipv4Addr>, port: u16) -> Result<Self> {
         let stream = if let Some(addr) = with.as_ref() {
             let server_addr = SocketAddrV4::new(addr.clone(), port);
-            connect_until_success(server_addr, Duration::from_millis(200))?
+            connect_until_success(server_addr, Duration::from_millis(200))
+                .with_context(|| format!("failed to connect with {}", server_addr))?
         } else {
             let inaddr_any = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
-            let listener = TcpListener::bind(inaddr_any)?;
-            listener.accept()?.0
+            let listener = TcpListener::bind(inaddr_any).with_context(|| "failed to listen")?;
+            listener.accept().with_context(|| "failed to accept")?.0
         };
 
         Ok(Self {
@@ -100,12 +109,16 @@ impl Connecter {
 
         let (with, stream) = if id < with {
             let server_addr = SocketAddrV4::new(cluster.peers()[with], port);
-            let stream = connect_until_success(server_addr, Duration::from_millis(200))?;
+            let stream = connect_until_success(server_addr, Duration::from_millis(200))
+                .with_context(|| format!("failed to connect with {}", server_addr))?;
             (Some(cluster.peers()[with]), stream)
         } else {
             let inaddr_any = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
-            let listener = TcpListener::bind(inaddr_any)?;
-            (None, listener.accept()?.0)
+            let listener = TcpListener::bind(inaddr_any).with_context(|| "failed to listen")?;
+            (
+                None,
+                listener.accept().with_context(|| "failed to accept")?.0,
+            )
         };
 
         Ok(Connecter {
@@ -127,24 +140,30 @@ impl Connecter {
         }
 
         let ep = QpEndpoint::from(qp);
-        let ep = serde_json::to_string(&ep)?;
+        let ep = serde_json::to_string(&ep).with_context(|| "failed to serialize QP info")?;
 
         let mut stream = self.stream.as_ref().unwrap();
         let ep = if self.with.is_some() {
             // First receive
-            let buf = stream_read(&mut stream)?;
-            let peer = serde_json::from_slice::<QpEndpoint>(buf.as_slice())?;
+            let buf =
+                stream_read(&mut stream).with_context(|| "failed to receive remote QP info")?;
+            let peer = serde_json::from_slice::<QpEndpoint>(buf.as_slice())
+                .with_context(|| "failed to decode remote QP info")?;
 
             // Then send
-            stream_write(&mut stream, ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())
+                .with_context(|| "failed to send local QP info to remote")?;
             peer
         } else {
             // First send
-            stream_write(&mut stream, ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())
+                .with_context(|| "failed to send local QP info to remote")?;
 
             // Then receive
-            let buf = stream_read(&mut stream)?;
-            serde_json::from_slice::<QpEndpoint>(buf.as_slice())?
+            let buf =
+                stream_read(&mut stream).with_context(|| "failed to receive remote QP info")?;
+            serde_json::from_slice::<QpEndpoint>(buf.as_slice())
+                .with_context(|| "failed to decode remote QP info")?
         };
 
         qp.connect(&ep)?;
@@ -159,7 +178,7 @@ impl Connecter {
     ///
     /// It is expected that the opponent side calls this method simultaneously
     /// with a same number of QPs.
-    pub fn connect_many(&self, qps: &Vec<Qp>) -> Result<Vec<Option<QpPeer>>> {
+    pub fn connect_many(&self, qps: &[Qp]) -> Result<Vec<Option<QpPeer>>> {
         if self.stream.is_none() {
             return Err(anyhow::anyhow!("no connection established"));
         }
@@ -168,29 +187,50 @@ impl Connecter {
             .iter()
             .map(|qp| QpEndpoint::from(qp))
             .collect::<Vec<_>>();
-        let ep = serde_json::to_string(&ep)?;
+        let ep = serde_json::to_string(&ep).with_context(|| "failed to serialize QP info vec")?;
 
         let mut stream = self.stream.as_ref().unwrap();
         let eps = if self.with.is_some() {
             // First receive
-            let buf = stream_read(&mut stream)?;
-            let peer = serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?;
+            let buf = stream_read(&mut stream)
+                .with_context(|| "failed to receive remote QP info vec from")?;
+            let peer =
+                serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice()).with_context(|| {
+                    format!(
+                        "failed to decode remote QP info vec (from: {})",
+                        String::from_utf8_lossy(&buf)
+                    )
+                })?;
 
             // Then send
-            stream_write(&mut stream, ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())
+                .with_context(|| "failed to send local QP info vec to remote")?;
             peer
         } else {
             // First send
-            stream_write(&mut stream, ep.as_bytes())?;
+            stream_write(&mut stream, ep.as_bytes())
+                .with_context(|| "failed to send local QP info vec to remote")?;
 
             // Then receive
-            let buf = stream_read(&mut stream)?;
-            serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice())?
+            let buf =
+                stream_read(&mut stream).with_context(|| "failed to receive remote QP info vec")?;
+            serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice()).with_context(|| {
+                format!(
+                    "failed to decode remote QP info vec (from: {})",
+                    String::from_utf8_lossy(&buf)
+                )
+            })?
         };
 
         // Remote side must have the same number of QPs
         if eps.len() != qps.len() {
-            return Err(anyhow::anyhow!("QP number mismatch"));
+            return Err(anyhow::anyhow!(
+                "QP number mismatch: local {} ({:?}) vs remote {} ({:?})",
+                qps.len(),
+                ep,
+                eps.len(),
+                eps
+            ));
         }
 
         let peers = eps
@@ -212,14 +252,12 @@ impl Connecter {
     ///
     /// This method accepts a `MrSlice` instead of a `Mr` to let the sender
     /// control what part of the MR to send.
-    pub fn send_mr(&self, slice: MrSlice) -> Result<()> {
+    pub fn send_mr(&self, slice: RemoteMem) -> Result<()> {
         if self.stream.is_none() {
             return Err(anyhow::anyhow!("no connection established"));
         }
 
-        let mr_data = RemoteMem::from(slice);
-        let mr = serde_json::to_string(&mr_data)?;
-
+        let mr = serde_json::to_string(&slice)?;
         let mut stream = self.stream.as_ref().unwrap();
         stream_write(&mut stream, mr.as_bytes())?;
 

@@ -2,11 +2,14 @@ use std::io::prelude::*;
 use std::net::*;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use local_ip_address::list_afinet_netifas;
 
 use super::{barrier::Barrier, connecter::Connecter};
-use crate::rdma::{cq::Cq, pd::Pd, qp::*};
+use crate::{
+    rdma::{cq::Cq, pd::Pd, qp::*},
+    RemoteMem,
+};
 
 fn is_my_ip(ip: &Ipv4Addr) -> bool {
     let my_ips = list_afinet_netifas().unwrap();
@@ -197,7 +200,6 @@ impl Cluster {
     /// form pairs and connect with each other. If such an opponent does not
     /// exist, the iterator will block until all other pariticipants also
     /// finished this step and move to the next step.
-    #[inline]
     pub fn connect_fc(
         &self,
         pd: Pd,
@@ -238,11 +240,10 @@ impl Cluster {
         };
 
         for i in 1..n {
-            let id = self.rank();
-            let peer_id = i ^ id;
+            let id = i ^ self.rank();
 
             // Connect with the peer if it is existent
-            if peer_id < self.size() {
+            if id < self.size() {
                 // Create QPs
                 let mut qps = Vec::with_capacity(num_links);
                 for _ in 0..num_links {
@@ -265,13 +266,62 @@ impl Cluster {
                 }
 
                 // Connect the QPs with the current peer
-                let peers = Connecter::within_cluster(self, peer_id)?.connect_many(&qps)?;
+                let peers = Connecter::within_cluster(self, id)?.connect_many(&qps)?;
                 let conn = qps.into_iter().zip(peers).collect::<Vec<_>>();
-                connections[peer_id] = Some(conn);
+                connections[id] = Some(conn);
             }
             Barrier::wait(self);
         }
         Ok(connections)
+    }
+
+    /// Exchange memory region information with all other nodes in the cluster.
+    ///
+    /// The argument `mr_provider` takes the peer node ID and returns a
+    /// [`RemoteMem`] to be sent to that peer.
+    pub fn exchange_mr_fc(
+        &self,
+        mr_provider: impl Fn(usize) -> RemoteMem,
+    ) -> Result<Vec<Option<RemoteMem>>> {
+        // XOR connection
+        let n = {
+            let mut n = 1;
+            while n < self.size() {
+                n *= 2;
+            }
+            n
+        };
+
+        let mut rmrs = vec![None; self.size()];
+        for i in 1..n {
+            let id = i ^ self.rank();
+
+            // Connect with the peer if it is existent
+            if id < self.size() {
+                let lmr = mr_provider(id);
+
+                let connecter = Connecter::within_cluster(self, id)?;
+                let rmr = if self.rank() < id {
+                    connecter
+                        .send_mr(lmr)
+                        .with_context(|| format!("failed to send MR info to peer {}", id))?;
+                    connecter
+                        .recv_mr()
+                        .with_context(|| format!("failed to recv MR info from peer {}", id))?
+                } else {
+                    let ret = connecter
+                        .recv_mr()
+                        .with_context(|| format!("failed to recv MR info from peer {}", id))?;
+                    connecter
+                        .send_mr(lmr)
+                        .with_context(|| format!("failed to send MR info to peer {}", id))?;
+                    ret
+                };
+                rmrs[id] = Some(rmr);
+            }
+            Barrier::wait(self);
+        }
+        Ok(rmrs)
     }
 
     /// Create client-server RC connection among the nodes in the cluster.
@@ -316,7 +366,6 @@ impl Cluster {
     ///
     /// Note that there will not be RDMA connections between the clients and the
     /// servers in the same node.
-    #[inline]
     pub fn connect_cs(
         &self,
         pd: Pd,
@@ -347,15 +396,14 @@ impl Cluster {
         };
 
         for i in 1..n {
-            let id = self.rank();
-            let peer_id = i ^ id;
+            let id = i ^ self.rank();
 
             // Connect with the peer if it is existent
-            if peer_id < self.size() {
+            if id < self.size() {
                 // Create QPs
                 let cli = {
-                    let send_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_SHORT_DEPTH)?;
-                    let recv_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_SHORT_DEPTH)?;
+                    let send_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
+                    let recv_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
                     Qp::new(
                         pd.clone(),
                         QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::Rc, true),
@@ -375,15 +423,14 @@ impl Cluster {
                 };
 
                 // Connect the QPs with the current peer
-                Connecter::within_cluster(self, peer_id)?.connect_many(&{
-                    if id < peer_id {
-                        vec![cli.clone(), svr.clone()]
-                    } else {
-                        vec![svr.clone(), cli.clone()]
-                    }
-                })?;
-                clients[peer_id] = Some(cli);
-                servers[peer_id] = Some(svr);
+                let qp_vec = if self.rank() < id {
+                    vec![cli.clone(), svr.clone()]
+                } else {
+                    vec![svr.clone(), cli.clone()]
+                };
+                Connecter::within_cluster(self, id)?.connect_many(&qp_vec)?;
+                clients[id] = Some(cli);
+                servers[id] = Some(svr);
             }
             Barrier::wait(self);
         }

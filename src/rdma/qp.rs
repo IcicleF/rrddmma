@@ -11,6 +11,7 @@ use super::wr::*;
 use crate::utils::{interop::*, select::*};
 
 use anyhow::{Context as _, Result};
+use libc;
 use rdma_sys::*;
 
 /// Queue pair type.
@@ -91,7 +92,7 @@ impl From<u32> for QpState {
 ///
 /// The documentation is heavily borrowed from [RDMAmojo](https://www.rdmamojo.com/2012/12/21/ibv_create_qp/).
 /// My biggest thanks to the author, Dotan Barak.
-#[derive(fmt::Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct QpCaps {
     /// The maximum number of outstanding Work Requests that can be posted to
     /// the Send Queue in that Queue Pair.
@@ -198,14 +199,14 @@ impl QpInitAttr {
     ///
     /// - the send CQ and the receive CQ are the same,
     /// - QP capabilities are set to the default values, and
-    /// - all the work requests are signaled.
+    /// - work requests are NOT signaled by default.
     pub fn default_rc(cq: Cq) -> Self {
         QpInitAttr {
             send_cq: cq.clone(),
             recv_cq: cq,
             cap: QpCaps::default(),
             qp_type: QpType::Rc,
-            sq_sig_all: true,
+            sq_sig_all: false,
         }
     }
 }
@@ -310,7 +311,6 @@ impl Drop for QpPeer {
     }
 }
 
-#[derive(Debug)]
 struct QpInner {
     pd: Pd,
     qp: NonNull<ibv_qp>,
@@ -326,11 +326,19 @@ impl Drop for QpInner {
     }
 }
 
+impl PartialEq for QpInner {
+    fn eq(&self, other: &Self) -> bool {
+        self.qp.as_ptr() == other.qp.as_ptr()
+    }
+}
+
+impl Eq for QpInner {}
+
 /// Queue pair.
 ///
 /// This type is a simple wrapper of an `Arc` and is guaranteed to have the
 /// same memory layout with it.
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Qp {
     inner: Arc<QpInner>,
@@ -350,7 +358,14 @@ impl<'a> From<&Qp> for QpEndpoint {
     }
 }
 
+impl fmt::Debug for Qp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("Qp<{:p}>", self.as_ptr()))
+    }
+}
+
 impl Qp {
+    /// Create a new queue pair with the given initialization attributes.
     pub fn new(pd: Pd, init_attr: QpInitAttr) -> Result<Self> {
         let qp = NonNull::new(unsafe {
             ibv_create_qp(pd.as_ptr(), &mut ibv_qp_init_attr::from(init_attr.clone()))
@@ -405,16 +420,22 @@ impl Qp {
         }
     }
 
+    /// Get the capabilities of this QP.
+    #[inline]
+    pub fn caps(&self) -> QpCaps {
+        self.inner.init_attr.cap
+    }
+
     /// Get the associated send completion queue.
     #[inline]
-    pub fn scq(&self) -> Cq {
-        self.inner.init_attr.send_cq.clone()
+    pub fn scq(&self) -> &Cq {
+        &self.inner.init_attr.send_cq
     }
 
     /// Get the associated receive completion queue.
     #[inline]
-    pub fn rcq(&self) -> Cq {
-        self.inner.init_attr.recv_cq.clone()
+    pub fn rcq(&self) -> &Cq {
+        &self.inner.init_attr.recv_cq
     }
 
     fn modify_reset_to_init(&self, ep: &QpEndpoint) -> Result<()> {
@@ -516,6 +537,18 @@ impl Qp {
         Ok(())
     }
 
+    /// Explain [`ibv_post_recv`] errors, for internal use.
+    fn recv_err_explanation(ret: i32) -> Option<&'static str> {
+        match ret {
+            libc::EINVAL => Some("invalid work request"),
+            libc::ENOMEM => {
+                Some("recv queue is full, or not enough resources to complete this operation")
+            }
+            libc::EFAULT => Some("invalid QP"),
+            _ => None,
+        }
+    }
+
     /// Post a RDMA recv request.
     ///
     /// **NOTE:** This method has no mutable borrows to its parameters, but can
@@ -536,7 +569,38 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_recv(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        from_c_ret(ret)
+        from_c_ret_explained(ret, Self::recv_err_explanation)
+    }
+
+    /// Post a list of receive work requests to the queue pair in order.
+    /// This enables doorbell batching and can reduce doorbell ringing overheads.
+    #[inline]
+    pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
+        // Safety: we only hold references to the `RecvWr`s, whose lifetimes
+        // can only outlive this function. `ibv_post_recv` is used inside this
+        // function, so the work requests are guaranteed to be valid.
+        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
+        for i in 0..(wrs.len() - 1) {
+            wrs[i].next = &mut wrs[i + 1];
+        }
+
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_recv(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::recv_err_explanation)
+    }
+
+    /// Explain [`ibv_post_send`] errors, for internal use.
+    fn send_err_explanation(ret: i32) -> Option<&'static str> {
+        match ret {
+            libc::EINVAL => Some("invalid work request"),
+            libc::ENOMEM => {
+                Some("send queue is full, or not enough resources to complete this operation")
+            }
+            libc::EFAULT => Some("invalid QP"),
+            _ => None,
+        }
     }
 
     /// Post an RDMA send request.
@@ -586,7 +650,7 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        from_c_ret(ret)
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
     /// Post an RDMA read request.
@@ -626,7 +690,7 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        from_c_ret(ret)
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
     /// Post an RDMA write request.
@@ -671,7 +735,7 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        from_c_ret(ret)
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
     /// Post an RDMA atomic compare-and-swap (CAS) request.
@@ -730,7 +794,7 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        from_c_ret(ret)
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
     /// Post an RDMA fetch-and-add (FAA) request.
@@ -788,45 +852,36 @@ impl Qp {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
         };
-        from_c_ret(ret)
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
     /// Post a list of send work requests to the queue pair in order.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
-    pub fn post_send(&self, ops: &[SendWr<'_>]) -> Result<()> {
+    pub fn post_send(&self, ops: &[SendWr<'_, '_>]) -> Result<()> {
         // Safety: we only hold references to the `SendWr`s, whose lifetimes
         // can only outlive this function. `ibv_post_send` is used inside this
         // function, so the work requests are guaranteed to be valid.
         let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
         for i in 0..(wrs.len() - 1) {
-            wrs[i].next = &mut wrs[i + 1];
+            unsafe {
+                wrs.get_unchecked_mut(i).next = wrs.get_unchecked_mut(i + 1);
+            }
         }
 
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
-        };
-        from_c_ret(ret)
-    }
-
-    /// Post a list of receive work requests to the queue pair in order.
-    /// This enables doorbell batching and can reduce doorbell ringing overheads.
-    #[inline]
-    pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
-        // Safety: we only hold references to the `RecvWr`s, whose lifetimes
-        // can only outlive this function. `ibv_post_recv` is used inside this
-        // function, so the work requests are guaranteed to be valid.
-        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
-        for i in 0..(wrs.len() - 1) {
-            wrs[i].next = &mut wrs[i + 1];
-        }
-
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
-        };
-        from_c_ret(ret)
+        let mut bad_wr = ptr::null_mut();
+        let ret = unsafe { ibv_post_send(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr) };
+        from_c_ret_explained(ret, Self::send_err_explanation).with_context(|| {
+            let failed = wrs
+                .iter()
+                .enumerate()
+                .filter(|(_, wr)| (*wr) as *const _ == bad_wr)
+                .next();
+            match failed {
+                Some((i, _)) => format!("failed at work request #{}", i),
+                None => "failed at unknown work request".to_string(),
+            }
+        })
     }
 }
 

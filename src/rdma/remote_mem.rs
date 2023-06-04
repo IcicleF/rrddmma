@@ -10,7 +10,7 @@ use rdma_sys::*;
 /// have a `RemoteMemSlice` counterpart, as this type itself can represent a
 /// remote memory region slice by letting `addr` and `len` correspond to only
 /// a part of the entire remote memory region.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RemoteMem {
     pub addr: u64,
     pub len: usize,
@@ -125,5 +125,13 @@ impl From<MrSlice<'_, '_>> for RemoteMem {
             len: slice.len(),
             rkey: slice.mr().rkey(),
         }
+    }
+}
+
+/// Convert an [`Option<RemoteMem>`] into a [`RemoteMem`]. If the input is
+/// `None`, a dummy `RemoteMem` will be returned.
+impl From<Option<RemoteMem>> for RemoteMem {
+    fn from(opt: Option<RemoteMem>) -> Self {
+        opt.unwrap_or_else(RemoteMem::dummy)
     }
 }
