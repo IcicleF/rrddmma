@@ -621,6 +621,10 @@ impl Qp {
         signal: bool,
         inline: bool,
     ) -> Result<()> {
+        if !signal && self.inner.init_attr.sq_sig_all {
+            log::warn!("QP configured to signal all sends despite this send ask to not signal");
+        }
+
         let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
@@ -668,6 +672,12 @@ impl Qp {
         wr_id: u64,
         signal: bool,
     ) -> Result<()> {
+        if !signal && self.inner.init_attr.sq_sig_all {
+            log::warn!(
+                "QP configured to signal all sends despite this RDMA read ask to not signal"
+            );
+        }
+
         let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
@@ -707,6 +717,12 @@ impl Qp {
         imm: Option<u32>,
         signal: bool,
     ) -> Result<()> {
+        if !signal && self.inner.init_attr.sq_sig_all {
+            log::warn!(
+                "QP configured to signal all sends despite this RDMA write ask to not signal"
+            );
+        }
+
         let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
@@ -754,6 +770,10 @@ impl Qp {
         wr_id: u64,
         signal: bool,
     ) -> Result<()> {
+        if !signal && self.inner.init_attr.sq_sig_all {
+            log::warn!("QP configured to signal all sends despite this RDMA CAS ask to not signal");
+        }
+
         if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
             return Err(anyhow::anyhow!(
                 "expected 8B buffers for compare-and-swap, got ({}, {})",
@@ -812,6 +832,10 @@ impl Qp {
         wr_id: u64,
         signal: bool,
     ) -> Result<()> {
+        if !signal && self.inner.init_attr.sq_sig_all {
+            log::warn!("QP configured to signal all sends despite this RDMA FAA ask to not signal");
+        }
+
         if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
             return Err(anyhow::anyhow!(
                 "expected 8B buffers for fetch-add, got ({}, {})",
@@ -859,6 +883,12 @@ impl Qp {
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
     pub fn post_send(&self, ops: &[SendWr<'_, '_>]) -> Result<()> {
+        if ops.iter().any(|wr| wr.signaled()) && self.inner.init_attr.sq_sig_all {
+            log::warn!(
+                "QP configured to signal all sends despite some work requests ask to not signal"
+            );
+        }
+
         // Safety: we only hold references to the `SendWr`s, whose lifetimes
         // can only outlive this function. `ibv_post_send` is used inside this
         // function, so the work requests are guaranteed to be valid.

@@ -151,6 +151,12 @@ impl<'a, 'b> SendWr<'a, 'b> {
         )
     }
 
+    /// Get whether this work request is signaled.
+    #[inline]
+    pub fn signaled(&self) -> bool {
+        self.0.signal
+    }
+
     /// Translate the `SendWr` into a `ibv_send_wr` that can be passed to
     /// `ibv_post_send`.
     pub fn to_wr(&self) -> ibv_send_wr {
