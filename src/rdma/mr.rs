@@ -1,11 +1,14 @@
+use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::marker::PhantomData;
-use std::ops::{Bound, Range, RangeBounds};
+use std::ops::{Bound, Index, Range, RangeBounds};
 use std::ptr::NonNull;
+use std::slice::{self, SliceIndex};
 use std::sync::Arc;
 use std::{fmt, io, mem};
 
 use super::pd::Pd;
+use super::remote_mem::RemoteMem;
 
 use anyhow::Result;
 use rdma_sys::*;
@@ -15,7 +18,7 @@ use rdma_sys::*;
 struct MrInner<'mem> {
     pd: Pd,
     mr: NonNull<ibv_mr>,
-    marker: PhantomData<&'mem mut [u8]>,
+    marker: PhantomData<&'mem UnsafeCell<[u8]>>,
 }
 
 unsafe impl Send for MrInner<'_> {}
@@ -23,6 +26,7 @@ unsafe impl Sync for MrInner<'_> {}
 
 impl Drop for MrInner<'_> {
     fn drop(&mut self) {
+        // SAFETY: FFI.
         unsafe {
             ibv_dereg_mr(self.mr.as_ptr());
         }
@@ -45,7 +49,7 @@ pub struct Mr<'mem> {
 
 impl fmt::Debug for Mr<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("Mr<{:p}>", self.as_ptr()))
+        f.write_fmt(format_args!("Mr<{:p}>", self.as_raw()))
     }
 }
 
@@ -72,28 +76,35 @@ impl<'mem> Mr<'mem> {
     /// you managed to run this crate on one, this function will error as remote
     /// memory addresses are represented by the `u64` type.
     pub fn reg(pd: Pd, buf: &'mem [u8]) -> Result<Self> {
+        // SAFETY: this call simply decouples the reference to a long pointer
+        // into an address, a length, and a lifetime.
         unsafe { Self::reg_with_ref(pd, buf.as_ptr() as *mut u8, buf.len(), buf) }
     }
 
-    /// Register a memory region with the given protection domain and a raw
-    /// pointer. An extra lifetime provider is required to get the lifetime
-    /// parameter for the created instance.
+    /// Register a memory region with the given protection domain with the
+    /// memory area reference decoupled into a raw pointer, a length, and an
+    /// extra lifetime provider is required to get the lifetime parameter
+    /// for the created memory region instance.
     ///
     /// The caller must ensure that the memory area `[addr..(addr + len))`
     /// outlives the lifetime provided by the `_marker`.
-    pub unsafe fn reg_with_ref(
+    pub unsafe fn reg_with_ref<Marker>(
         pd: Pd,
         addr: *mut u8,
         len: usize,
-        _marker: &'mem impl ?Sized,
-    ) -> Result<Self> {
+        _marker: &'mem Marker,
+    ) -> Result<Self>
+    where
+        Marker: ?Sized,
+    {
         if mem::size_of::<usize>() != mem::size_of::<u64>() {
             return Err(anyhow::anyhow!("non-64-bit platforms are not supported"));
         }
 
+        // SAFETY: FFI.
         let mr = NonNull::new(unsafe {
             ibv_reg_mr(
-                pd.as_ptr(),
+                pd.as_raw(),
                 addr as *mut c_void,
                 len,
                 (ibv_access_flags::IBV_ACCESS_LOCAL_WRITE
@@ -109,7 +120,7 @@ impl<'mem> Mr<'mem> {
                 inner: Arc::new(MrInner {
                     pd,
                     mr,
-                    marker: PhantomData::<&'mem mut [u8]>,
+                    marker: PhantomData::<&'mem UnsafeCell<[u8]>>,
                 }),
             }),
             None => Err(anyhow::anyhow!(io::Error::last_os_error())),
@@ -118,31 +129,35 @@ impl<'mem> Mr<'mem> {
 
     /// Get the underlying `ibv_mr` structure.
     #[inline]
-    pub fn as_ptr(&self) -> *mut ibv_mr {
+    pub fn as_raw(&self) -> *mut ibv_mr {
         self.inner.mr.as_ptr()
     }
 
     /// Get the start address of the registered memory area.
     #[inline]
     pub fn addr(&self) -> *mut u8 {
+        // SAFETY: the pointer is valid as long as the `Mr` is alive.
         unsafe { (*self.inner.mr.as_ptr()).addr as *mut u8 }
     }
 
     /// Get the length of the registered memory area.
     #[inline]
     pub fn len(&self) -> usize {
+        // SAFETY: the pointer is valid as long as the `Mr` is alive.
         unsafe { (*self.inner.mr.as_ptr()).length }
     }
 
     /// Get the local key of the memory region.
     #[inline]
     pub fn lkey(&self) -> u32 {
+        // SAFETY: the pointer is valid as long as the `Mr` is alive.
         unsafe { (*self.inner.mr.as_ptr()).lkey }
     }
 
     /// Get the remote key of the memory region.
     #[inline]
     pub fn rkey(&self) -> u32 {
+        // SAFETY: the pointer is valid as long as the `Mr` is alive.
         unsafe { (*self.inner.mr.as_ptr()).rkey }
     }
 
@@ -155,7 +170,10 @@ impl<'mem> Mr<'mem> {
     /// Get a memory region slice that represents the specified range of
     /// the memory area. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: impl RangeBounds<usize>) -> Option<MrSlice> {
+    pub fn get_slice<R>(&self, r: R) -> Option<MrSlice>
+    where
+        R: RangeBounds<usize>,
+    {
         let start = match r.start_bound() {
             Bound::Included(&s) => s,
             Bound::Excluded(&s) => s + 1,
@@ -188,7 +206,10 @@ impl<'mem> Mr<'mem> {
     /// the memory area. The behavior is undefined if the range is out of
     /// bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice {
+    pub unsafe fn get_slice_unchecked<R>(&self, r: R) -> MrSlice
+    where
+        R: RangeBounds<usize>,
+    {
         let start = match r.start_bound() {
             Bound::Included(&s) => s,
             Bound::Excluded(&s) => s + 1,
@@ -202,6 +223,32 @@ impl<'mem> Mr<'mem> {
 
         MrSlice::new(self, start..end)
     }
+
+    /// View this local memory region as a remote memory region for RDMA access
+    /// from remote peers.
+    #[inline]
+    pub fn as_remote(&self) -> RemoteMem {
+        RemoteMem {
+            addr: self.addr() as u64,
+            len: self.len(),
+            rkey: self.rkey(),
+        }
+    }
+}
+
+impl<'mem, I> Index<I> for Mr<'mem>
+where
+    I: SliceIndex<[u8]>,
+{
+    type Output = <I as SliceIndex<[u8]>>::Output;
+
+    /// Index into the memory region as a `[u8]`.
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        // SAFETY: TODO: is this really safe?
+        let s = unsafe { slice::from_raw_parts(self.addr(), self.len()) };
+        &s[index]
+    }
 }
 
 /// Slice of a local memory region.
@@ -209,20 +256,28 @@ impl<'mem> Mr<'mem> {
 /// A slice corresponds to an RDMA scatter-gather list entry, which can be used
 /// in RDMA data-plane verbs.
 #[derive(Debug, Clone)]
-pub struct MrSlice<'a, 'mem> {
+pub struct MrSlice<'a, 'mem>
+where
+    'mem: 'a,
+{
     mr: &'a Mr<'mem>,
     range: Range<usize>,
 }
 
 impl<'a, 'mem> MrSlice<'a, 'mem> {
     /// Create a new memory region slice of the given MR and range.
-    pub fn new(mr: &'a Mr<'mem>, range: Range<usize>) -> Self {
+    pub(crate) fn new(mr: &'a Mr<'mem>, range: Range<usize>) -> Self {
         Self { mr, range }
     }
 
     /// Get the starting address of the slice.
     #[inline]
     pub fn addr(&self) -> *mut u8 {
+        // SAFETY: the address is guaranteed to be contained within the
+        // registered memory area as it can only be created from safe
+        // [`Mr`] interfaces where the range will be checked, or from
+        // unsafe [`Mr`] interfaces where the user is responsible for
+        // ensuring the range's correctness.
         unsafe { self.mr.addr().add(self.range.start) }
     }
 
@@ -294,8 +349,10 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
         )
     }
 
-    /// Resize the memory region slice to the specified length. Return whether
-    /// the resize was successful.
+    /// Attempt to resize the memory region slice to the specified length.
+    /// This attempt can have no effect if the desired length is greater
+    /// than the largest possible length of the slice.
+    /// Return whether the resize was successful.
     #[must_use = "must check if the resize was successful"]
     #[inline]
     pub fn resize(&mut self, len: usize) -> bool {
@@ -306,6 +363,21 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
         } else {
             false
         }
+    }
+}
+
+impl<'a, 'mem, I> Index<I> for MrSlice<'a, 'mem>
+where
+    I: SliceIndex<[u8]>,
+{
+    type Output = <I as SliceIndex<[u8]>>::Output;
+
+    /// Index
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        // SAFETY: TODO: is this really safe?
+        let s = unsafe { slice::from_raw_parts(self.addr(), self.len()) };
+        &s[index]
     }
 }
 
@@ -321,6 +393,7 @@ impl From<MrSlice<'_, '_>> for ibv_sge {
 
 impl From<MrSlice<'_, '_>> for NonNull<u8> {
     fn from(slice: MrSlice<'_, '_>) -> Self {
+        // SAFETY: the address is guaranteed to be non-null.
         unsafe { NonNull::new_unchecked(slice.addr()) }
     }
 }

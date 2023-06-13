@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 #[repr(transparent)]
 pub struct Gid(ibv_gid);
 
+// SAFETY: [`ibv_gid`] is a PoD type, and so is [`Gid`].
 unsafe impl Send for Gid {}
 unsafe impl Sync for Gid {}
 
@@ -25,6 +26,8 @@ impl fmt::Debug for Gid {
 impl PartialEq for Gid {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
+        // SAFETY: byte-level reinterpretation of the fixed-size [`ibv_gid`]
+        // union is always safe.
         unsafe { self.0.raw == other.0.raw }
     }
 }
@@ -55,6 +58,8 @@ impl From<Ipv6Addr> for Gid {
 impl From<Gid> for Ipv6Addr {
     #[inline]
     fn from(gid: Gid) -> Self {
+        // SAFETY: byte-level reinterpretation of the fixed-size [`ibv_gid`]
+        // union is always safe.
         Ipv6Addr::from(unsafe { gid.0.raw })
     }
 }
@@ -69,6 +74,8 @@ impl From<[u8; 16]> for Gid {
 impl From<Gid> for [u8; 16] {
     #[inline]
     fn from(gid: Gid) -> Self {
+        // SAFETY: byte-level reinterpretation of the fixed-size [`ibv_gid`]
+        // union is always safe.
         unsafe { gid.0.raw }
     }
 }
@@ -84,17 +91,5 @@ impl<'de> Deserialize<'de> for Gid {
     #[inline]
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         <[u8; 16] as Deserialize<'de>>::deserialize(deserializer).map(Self::from)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_repr() {
-        use std::mem::*;
-        assert_eq!(size_of::<Gid>(), size_of::<ibv_gid>());
-        assert_eq!(align_of::<Gid>(), align_of::<ibv_gid>());
     }
 }

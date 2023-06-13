@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 use std::{ffi, fmt, io, ops};
 
-use anyhow;
+use anyhow::Result;
 use rdma_sys::*;
 
 /// An RDMA device.
@@ -9,14 +9,22 @@ use rdma_sys::*;
 pub(crate) struct Device(NonNull<ibv_device>);
 
 impl Device {
-    pub(crate) fn as_ptr(&self) -> *mut ibv_device {
+    /// Get the underlying [`ibv_device`] pointer.
+    pub(crate) fn as_raw(&self) -> *mut ibv_device {
         self.0.as_ptr()
     }
 
-    pub(crate) fn name(&self) -> &str {
-        unsafe { ffi::CStr::from_ptr(ibv_get_device_name(self.as_ptr())) }
-            .to_str()
-            .unwrap()
+    /// Get a human-readable name associated with the device.
+    pub(crate) fn name(&self) -> String {
+        // SAFETY: FFI.
+        match unsafe { ibv_get_device_name(self.as_raw()) } {
+            // SAFETY: A non-null return value must point to a valid C string.
+            // The device name is pure-ASCII and may never fail the UTF-8 check.
+            name if !name.is_null() => unsafe { ffi::CStr::from_ptr(name) }
+                .to_string_lossy()
+                .into_owned(),
+            _ => String::from(""),
+        }
     }
 }
 
@@ -28,25 +36,30 @@ impl fmt::Debug for Device {
 
 /// A list of available RDMA devices.
 pub(crate) struct DeviceList {
-    /// Pointer to the head of the device list
+    /// Pointer to the head of the device list.
     list: NonNull<Device>,
 
-    /// List length
+    /// List length.
     len: usize,
 }
 
 impl DeviceList {
-    pub(crate) fn new() -> anyhow::Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         let mut num_devices = 0;
-        let list = unsafe { ibv_get_device_list(&mut num_devices) };
-        if list.is_null() {
-            return Err(anyhow::anyhow!(io::Error::last_os_error()));
-        }
 
-        Ok(Self {
-            list: unsafe { NonNull::new_unchecked(list.cast()) },
-            len: num_devices as usize,
-        })
+        // SAFETY: FFI.
+        let list = unsafe { ibv_get_device_list(&mut num_devices) };
+        if !list.is_null() {
+            Ok(Self {
+                // SAFETY: `NonNull<T>` is transparent over `*mut T` and `Device`
+                // is transparent over `NonNull<ibv_device>`. Also, `list` is sure
+                // to be non-null at this point.
+                list: unsafe { NonNull::new_unchecked(list.cast()) },
+                len: num_devices as usize,
+            })
+        } else {
+            Err(anyhow::anyhow!(io::Error::last_os_error()))
+        }
     }
 
     #[allow(dead_code)]
@@ -62,12 +75,16 @@ impl DeviceList {
 
     #[inline]
     pub(crate) fn as_slice(&self) -> &[Device] {
+        // SAFETY: a non-null device list returned by ibverbs driver is sure
+        // to be contiguous, valid, and properly aligned. Also, there is no
+        // means to mutate from this type's interfaces.
         unsafe { std::slice::from_raw_parts(self.list.as_ptr(), self.len) }
     }
 }
 
 impl Drop for DeviceList {
     fn drop(&mut self) {
+        // SAFETY: FFI.
         unsafe { ibv_free_device_list(self.as_ptr()) };
     }
 }

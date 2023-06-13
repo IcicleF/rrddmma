@@ -2,6 +2,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{fmt, io, mem, ptr};
 
+use super::context::Context;
 use super::cq::Cq;
 use super::gid::Gid;
 use super::mr::*;
@@ -62,12 +63,6 @@ pub enum QpState {
     Error = ibv_qp_state::IBV_QPS_ERR as _,
     /// Unknown.
     Unknown = ibv_qp_state::IBV_QPS_UNKNOWN as _,
-}
-
-impl From<QpState> for u32 {
-    fn from(qp_state: QpState) -> Self {
-        qp_state as _
-    }
 }
 
 impl From<u32> for QpState {
@@ -176,10 +171,19 @@ impl QpCaps {
 /// Queue pair initialization attributes.
 #[derive(Debug, Clone)]
 pub struct QpInitAttr {
+    /// Send completion queue for this QP.
     pub send_cq: Cq,
+
+    /// Receive completion queue for this QP. Can be the same to send CQ.
     pub recv_cq: Cq,
+
+    /// Capabilities of this QP.
     pub cap: QpCaps,
+
+    /// Queue pair type.
     pub qp_type: QpType,
+
+    /// Whether to signal for all send work requests.
     pub sq_sig_all: bool,
 }
 
@@ -209,30 +213,29 @@ impl QpInitAttr {
             sq_sig_all: false,
         }
     }
-}
 
-impl From<QpInitAttr> for ibv_qp_init_attr {
-    fn from(value: QpInitAttr) -> Self {
+    /// Translate the initialization attributes into [`ibv_qp_init_attr`].
+    pub(crate) fn to_actual_init_attr(&self) -> ibv_qp_init_attr {
         ibv_qp_init_attr {
             qp_context: ptr::null_mut(),
-            send_cq: value.send_cq.as_ptr(),
-            recv_cq: value.recv_cq.as_ptr(),
+            send_cq: self.send_cq.as_raw(),
+            recv_cq: self.recv_cq.as_raw(),
             srq: ptr::null_mut(),
             cap: ibv_qp_cap {
-                max_send_wr: value.cap.max_send_wr,
-                max_recv_wr: value.cap.max_recv_wr,
-                max_send_sge: value.cap.max_send_sge,
-                max_recv_sge: value.cap.max_recv_sge,
-                max_inline_data: value.cap.max_inline_data,
+                max_send_wr: self.cap.max_send_wr,
+                max_recv_wr: self.cap.max_recv_wr,
+                max_send_sge: self.cap.max_send_sge,
+                max_recv_sge: self.cap.max_recv_sge,
+                max_inline_data: self.cap.max_inline_data,
             },
-            qp_type: u32::from(value.qp_type),
-            sq_sig_all: value.sq_sig_all as i32,
+            qp_type: u32::from(self.qp_type),
+            sq_sig_all: self.sq_sig_all as i32,
         }
     }
 }
 
 /// Endpoint (NIC port & queue pair) data.
-#[derive(fmt::Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct QpEndpoint {
     pub gid: Gid,
     pub port_num: u8,
@@ -288,19 +291,19 @@ impl QpPeer {
             static_rate: 0,
             port_num: ep.port_num,
         };
-        let ah = NonNull::new(unsafe { ibv_create_ah(pd.as_ptr(), &mut ah_attr) })
+        let ah = NonNull::new(unsafe { ibv_create_ah(pd.as_raw(), &mut ah_attr) })
             .ok_or(anyhow::anyhow!(io::Error::last_os_error()))
             .with_context(|| "failed to create address handle")?;
         Ok(QpPeer { ah, ep })
     }
-}
 
-impl From<&QpPeer> for ud_t {
-    fn from(peer: &QpPeer) -> Self {
+    /// Generate a [`ud_t`] instance for RDMA sends to this peer.
+    #[inline]
+    pub(crate) fn as_ud_t(&self) -> ud_t {
         ud_t {
-            ah: peer.ah.as_ptr(),
-            remote_qpn: peer.ep.qpn,
-            remote_qkey: peer.ep.qkey,
+            ah: self.ah.as_ptr(),
+            remote_qpn: self.ep.qpn,
+            remote_qkey: self.ep.qkey,
         }
     }
 }
@@ -344,20 +347,6 @@ pub struct Qp {
     inner: Arc<QpInner>,
 }
 
-impl<'a> From<&Qp> for QpEndpoint {
-    fn from(qp: &Qp) -> Self {
-        const GLOBAL_QKEY: u32 = 0x11111111;
-        QpEndpoint {
-            gid: qp.pd().context().gid(),
-            port_num: qp.pd().context().port_num(),
-            lid: qp.pd().context().lid(),
-            qpn: qp.qp_num(),
-            psn: 0,
-            qkey: GLOBAL_QKEY,
-        }
-    }
-}
-
 impl fmt::Debug for Qp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("Qp<{:p}>", self.as_ptr()))
@@ -368,7 +357,8 @@ impl Qp {
     /// Create a new queue pair with the given initialization attributes.
     pub fn new(pd: Pd, init_attr: QpInitAttr) -> Result<Self> {
         let qp = NonNull::new(unsafe {
-            ibv_create_qp(pd.as_ptr(), &mut ibv_qp_init_attr::from(init_attr.clone()))
+            let mut init_attr = init_attr.to_actual_init_attr();
+            ibv_create_qp(pd.as_raw(), &mut init_attr)
         })
         .ok_or(anyhow::anyhow!(io::Error::last_os_error()))
         .with_context(|| "failed to create queue pair")?;
@@ -387,6 +377,12 @@ impl Qp {
     #[inline]
     pub fn pd(&self) -> Pd {
         self.inner.pd.clone()
+    }
+
+    /// Get the context of the queue pair.
+    #[inline]
+    pub fn context(&self) -> Context {
+        self.inner.pd.context()
     }
 
     /// Get the type of the queue pair.
@@ -424,6 +420,20 @@ impl Qp {
     #[inline]
     pub fn caps(&self) -> QpCaps {
         self.inner.init_attr.cap
+    }
+
+    /// Get endpoint information of this QP.
+    #[inline]
+    pub fn endpoint(&self) -> QpEndpoint {
+        const GLOBAL_QKEY: u32 = 0x11111111;
+        QpEndpoint {
+            gid: self.context().gid(),
+            port_num: self.context().port_num(),
+            lid: self.context().lid(),
+            qpn: self.qp_num(),
+            psn: 0,
+            qkey: GLOBAL_QKEY,
+        }
     }
 
     /// Get the associated send completion queue.
@@ -470,7 +480,7 @@ impl Qp {
         if self.qp_type() == QpType::Rc {
             let ctx = self.inner.pd.context();
 
-            attr.path_mtu = ctx.active_mtu();
+            attr.path_mtu = ctx.mtu_raw();
             attr.dest_qp_num = ep.qpn;
             attr.rq_psn = ep.psn;
             attr.max_dest_rd_atomic = 16;
@@ -648,7 +658,7 @@ impl Qp {
             ..wr
         };
         if let Some(peer) = peer {
-            wr.wr.ud = ud_t::from(peer);
+            wr.wr.ud = peer.as_ud_t();
         }
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
@@ -692,7 +702,7 @@ impl Qp {
             opcode: ibv_wr_opcode::IBV_WR_RDMA_READ,
             send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
             wr: wr_t {
-                rdma: rdma_t::from(remote),
+                rdma: remote.as_rdma_t(),
             },
             ..wr
         };
@@ -743,7 +753,7 @@ impl Qp {
                 imm_data: imm.unwrap_or(0),
             },
             wr: wr_t {
-                rdma: rdma_t::from(remote),
+                rdma: remote.as_rdma_t(),
             },
             ..wr
         };
@@ -883,7 +893,7 @@ impl Qp {
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
     pub fn post_send(&self, ops: &[SendWr<'_, '_>]) -> Result<()> {
-        if ops.iter().any(|wr| wr.signaled()) && self.inner.init_attr.sq_sig_all {
+        if ops.iter().any(|wr| wr.is_signaled()) && self.inner.init_attr.sq_sig_all {
             log::warn!(
                 "QP configured to signal all sends despite some work requests ask to not signal"
             );

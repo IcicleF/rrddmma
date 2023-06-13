@@ -3,6 +3,8 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use super::context::Context;
+use super::mr::Mr;
+use super::qp::{Qp, QpInitAttr};
 
 use anyhow::{Context as _, Result};
 use rdma_sys::*;
@@ -19,6 +21,7 @@ unsafe impl Sync for PdInner {}
 
 impl Drop for PdInner {
     fn drop(&mut self) {
+        // SAFETY: FFI.
         unsafe { ibv_dealloc_pd(self.pd.as_ptr()) };
     }
 }
@@ -36,8 +39,9 @@ pub struct Pd {
 impl Pd {
     /// Allocate a protection domain for the given RDMA device context.
     pub fn new(ctx: Context) -> Result<Self> {
-        let pd = NonNull::new(unsafe { ibv_alloc_pd(ctx.as_ptr()) })
-            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))
+        // SAFETY: FFI
+        let pd = NonNull::new(unsafe { ibv_alloc_pd(ctx.as_raw()) })
+            .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))
             .with_context(|| "failed to create protection domain")?;
 
         Ok(Self {
@@ -46,24 +50,33 @@ impl Pd {
     }
 
     /// Get the underlying `ibv_pd` structure.
-    pub fn as_ptr(&self) -> *mut ibv_pd {
+    #[inline]
+    pub fn as_raw(&self) -> *mut ibv_pd {
         self.inner.pd.as_ptr()
     }
 
     /// Get the underlying `Context`.
+    #[inline]
     pub fn context(&self) -> Context {
         self.inner.ctx.clone()
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    /// Get the underlying `Context` as reference. This should be preferred
+    /// over `context()` when possible to avoid unnecessary clones.
+    #[inline]
+    pub fn context_ref(&self) -> &Context {
+        &self.inner.ctx
+    }
 
-    #[test]
-    fn test_alloc() {
-        let ctx = Context::open(Some("mlx5_0"), 1, 0).unwrap();
-        let pd = Pd::new(ctx.clone()).unwrap();
-        assert_eq!(pd.context().as_ptr(), ctx.as_ptr());
+    /// Register a memory region on this protection domain.
+    pub fn reg_mr<'mem>(&self, buf: &'mem [u8]) -> Result<Mr<'mem>> {
+        // SAFETY: this call simply decouples the reference to a long pointer
+        // into an address, a length, and a lifetime.
+        unsafe { Mr::reg_with_ref(self.clone(), buf.as_ptr() as *mut u8, buf.len(), buf) }
+    }
+
+    /// Create a queue pair on this protection domain.
+    pub fn create_qp(&self, init_attr: QpInitAttr) -> Result<Qp> {
+        Qp::new(self.clone(), init_attr)
     }
 }

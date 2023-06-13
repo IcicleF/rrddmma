@@ -38,14 +38,42 @@ mod utils;
 /// Not to be publicly exposed, instead `pub use` necessary items.
 mod rdma;
 
-pub use rdma::context::Context;
-pub use rdma::cq::*;
-pub use rdma::gid::Gid;
-pub use rdma::mr::*;
-pub use rdma::pd::Pd;
-pub use rdma::qp::*;
-pub use rdma::remote_mem::*;
-pub use rdma::wr::*;
+#[cfg(not(feature = "full_name"))]
+mod rdma_export {
+    pub use super::rdma::context::Context;
+    pub use super::rdma::cq::{Cq, Wc, WcOpcode, WcStatus};
+    pub use super::rdma::gid::Gid;
+    pub use super::rdma::mr::{Mr, MrSlice};
+    pub use super::rdma::pd::Pd;
+    pub use super::rdma::qp::{Qp, QpCaps, QpEndpoint, QpInitAttr, QpPeer, QpState, QpType};
+    pub use super::rdma::remote_mem::RemoteMem;
+    pub use super::rdma::wr::{RecvWr, SendWr, SendWrDetails};
+}
+
+#[cfg(feature = "full_name")]
+mod rdma_export {
+    pub use super::rdma::context::Context;
+    pub use super::rdma::cq::{
+        Cq as CompletionQueue, Wc as WorkCompletion, WcOpcode as WorkCompletionOpcode,
+        WcStatus as WorkCompletionStatus,
+    };
+    pub use super::rdma::gid::Gid;
+    pub use super::rdma::mr::{Mr as MemoryRegion, MrSlice as MemoryRegionSlice};
+    pub use super::rdma::pd::Pd as ProtectionDomain;
+    pub use super::rdma::qp::{
+        Qp as QueuePair, QpCaps as QueuePairCapabilities, QpEndpoint as QueuePairEndpoint,
+        QpInitAttr as QueuePairInitAttr, QpPeer as QueuePairPeer, QpState as QueuePairState,
+        QpType as QueuePairType,
+    };
+    pub use super::rdma::remote_mem::RemoteMem as RemoteMemory;
+    pub use super::rdma::wr::{
+        RecvWr as ReceiveWorkRequest, SendWr as SendWorkRequest,
+        SendWrDetails as SendWorkRequestDetails,
+    };
+}
+
+/// Export RDMA data-plane functionalities to the top-level.
+pub use rdma_export::*;
 
 /// Connection management utilities.
 pub mod ctrl;

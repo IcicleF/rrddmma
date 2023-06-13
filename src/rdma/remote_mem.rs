@@ -92,25 +92,14 @@ impl RemoteMem {
             rkey: self.rkey,
         }
     }
-}
 
-impl<'a> From<&RemoteMem> for rdma_t {
-    fn from(value: &RemoteMem) -> Self {
-        Self {
-            remote_addr: value.addr,
-            rkey: value.rkey,
-        }
-    }
-}
-
-/// Pack necessary information of a `Mr` into a `RemoteMr` so that it can be
-/// sent to the remote side.
-impl From<&'_ Mr<'_>> for RemoteMem {
-    fn from(mr: &'_ Mr<'_>) -> Self {
-        Self {
-            addr: mr.addr() as u64,
-            len: mr.len(),
-            rkey: mr.rkey(),
+    /// Generate a [`rdma_t`] instance for RDMA one-sided operations to this
+    /// piece of remote memory.
+    #[inline]
+    pub(crate) fn as_rdma_t(&self) -> rdma_t {
+        rdma_t {
+            remote_addr: self.addr,
+            rkey: self.rkey,
         }
     }
 }

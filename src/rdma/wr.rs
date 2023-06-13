@@ -11,12 +11,21 @@ use super::remote_mem::*;
 
 /// This type has the same memory layout with [`ibv_sge`] but with a [`Debug`]
 /// implementation.
-#[derive(Debug)]
 #[repr(C)]
 struct IbvSgeDebuggable {
     pub addr: u64,
     pub length: u32,
     pub lkey: u32,
+}
+
+impl fmt::Debug for IbvSgeDebuggable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!(
+            "Sge[{:p}, {:p})",
+            self.addr as *const u8,
+            (self.addr + self.length as u64) as *const u8
+        ))
+    }
 }
 
 /// Wrapper of basic parameters of an RDMA work request.
@@ -45,61 +54,57 @@ struct WrBase<'mem> {
 /// This is to improve performance when the user only uses RC.
 #[derive(Debug)]
 pub enum SendWrDetails<'a> {
-    /// Send via RC QP, requires specifying an optional immediate and whether
-    /// to inline.
-    SendRc(
+    /// Send via RC QP.
+    SendRc {
         /// [`Some`] to send with an immediate value, or [`None`] to send without.
-        Option<u32>,
+        imm: Option<u32>,
         /// Indicate whether to inline the send.
-        bool,
-    ),
+        inline: bool,
+    },
 
-    /// Send via UD QP, requires specifying the target, an optional immediate,
-    /// and whether to inline.
-    SendUd(
-        /// The target QP.
-        &'a QpPeer,
+    /// Send via UD QP.
+    SendUd {
+        /// Information of the receiver.
+        peer: &'a QpPeer,
         /// [`Some`] to send with an immediate value, or [`None`] to send without.
-        Option<u32>,
+        imm: Option<u32>,
         /// Indicate whether to inline the send.
-        bool,
-    ),
+        inline: bool,
+    },
 
-    /// Read, requires a remote memory area to read from.
-    Read(
+    /// Read.
+    Read {
         /// The remote memory area to read from.
-        RemoteMem,
-    ),
+        src: RemoteMem,
+    },
 
-    /// Write, requires a remote memory area to write to and an optional immediate.
-    Write(
+    /// Write.
+    Write {
         /// The remote memory area to write to.
-        RemoteMem,
+        dst: RemoteMem,
         /// [`Some`] to write with an immediate value, or [`None`] to write without.
-        Option<u32>,
-    ),
+        imm: Option<u32>,
+    },
 
-    /// Atomic compare-and-swap, requires a remote memory area to operate on, a
-    /// value to compare against, and a value to swap with.
-    CompareSwap(
+    /// Atomic compare-and-swap.
+    CompareSwap {
         /// The remote memory area to operate on.
         /// This must be an aligned 8B memory area.
-        RemoteMem,
+        dst: RemoteMem,
         /// The value to compare against.
-        u64,
+        current: u64,
         /// The value to swap with.
-        u64,
-    ),
+        new: u64,
+    },
 
-    /// Atomic fetch-and-add, requires a remote memory area to operate on and a
-    /// value to add.
-    FetchAdd(
+    /// Atomic fetch-and-add.
+    FetchAdd {
         /// The remote memory area to operate on.
         /// This must be an aligned 8B memory area.
-        RemoteMem,
+        dst: RemoteMem,
         /// The value to add.
-        u64,
-    ),
+        add: u64,
+    },
 }
 
 /// Send work request.
@@ -120,6 +125,7 @@ impl fmt::Debug for SendWr<'_, '_> {
             .0
             .local
             .iter()
+            // SAFETY: `IbvSgeDebuggable` has the same memory layout with `ibv_sge`.
             .map(|sge| unsafe { mem::transmute(*sge) })
             .collect::<Vec<IbvSgeDebuggable>>();
         f.debug_struct("SendWr")
@@ -151,15 +157,23 @@ impl<'a, 'b> SendWr<'a, 'b> {
         )
     }
 
+    /// Set whether this work request is signaled. Return `self` for chaining.
+    #[inline]
+    pub fn set_signaled(&mut self, signaled: bool) -> &mut Self {
+        self.0.signal = signaled;
+        self
+    }
+
     /// Get whether this work request is signaled.
     #[inline]
-    pub fn signaled(&self) -> bool {
+    pub fn is_signaled(&self) -> bool {
         self.0.signal
     }
 
     /// Translate the `SendWr` into a `ibv_send_wr` that can be passed to
     /// `ibv_post_send`.
     pub fn to_wr(&self) -> ibv_send_wr {
+        // SAFETY: this is safe in C.
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
 
         wr.wr_id = self.0.wr_id;
@@ -187,35 +201,35 @@ impl<'a, 'b> SendWr<'a, 'b> {
             }
         }
         match &self.1 {
-            SendWrDetails::SendRc(imm, inl) => {
+            SendWrDetails::SendRc { imm, inline } => {
                 fill_opcode_with_imm(
                     &mut wr,
                     imm,
                     ibv_wr_opcode::IBV_WR_SEND,
                     ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
                 );
-                if *inl {
+                if *inline {
                     wr.send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
                 }
             }
-            SendWrDetails::SendUd(peer, imm, inl) => {
-                wr.wr.ud = ud_t::from(*peer);
+            SendWrDetails::SendUd { peer, imm, inline } => {
+                wr.wr.ud = peer.as_ud_t();
                 fill_opcode_with_imm(
                     &mut wr,
                     imm,
                     ibv_wr_opcode::IBV_WR_SEND,
                     ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
                 );
-                if *inl {
+                if *inline {
                     wr.send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
                 }
             }
-            SendWrDetails::Read(remote) => {
-                wr.wr.rdma = rdma_t::from(remote);
+            SendWrDetails::Read { src } => {
+                wr.wr.rdma = src.as_rdma_t();
                 wr.opcode = ibv_wr_opcode::IBV_WR_RDMA_READ;
             }
-            SendWrDetails::Write(remote, imm) => {
-                wr.wr.rdma = rdma_t::from(remote);
+            SendWrDetails::Write { dst, imm } => {
+                wr.wr.rdma = dst.as_rdma_t();
                 fill_opcode_with_imm(
                     &mut wr,
                     imm,
@@ -223,21 +237,21 @@ impl<'a, 'b> SendWr<'a, 'b> {
                     ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
                 );
             }
-            SendWrDetails::CompareSwap(remote, current, new) => {
+            SendWrDetails::CompareSwap { dst, current, new } => {
                 wr.wr.atomic = atomic_t {
                     compare_add: *current,
                     swap: *new,
-                    remote_addr: remote.addr,
-                    rkey: remote.rkey,
+                    remote_addr: dst.addr,
+                    rkey: dst.rkey,
                 };
                 wr.opcode = ibv_wr_opcode::IBV_WR_ATOMIC_CMP_AND_SWP;
             }
-            SendWrDetails::FetchAdd(remote, add) => {
+            SendWrDetails::FetchAdd { dst, add } => {
                 wr.wr.atomic = atomic_t {
                     compare_add: *add,
                     swap: 0,
-                    remote_addr: remote.addr,
-                    rkey: remote.rkey,
+                    remote_addr: dst.addr,
+                    rkey: dst.rkey,
                 };
                 wr.opcode = ibv_wr_opcode::IBV_WR_ATOMIC_FETCH_AND_ADD;
             }
@@ -261,6 +275,7 @@ impl fmt::Debug for RecvWr<'_> {
             .0
             .local
             .iter()
+            // SAFETY: `IbvSgeDebuggable` has the same memory layout with `ibv_sge`.
             .map(|sge| unsafe { mem::transmute(*sge) })
             .collect::<Vec<IbvSgeDebuggable>>();
         f.debug_struct("RecvWr")
@@ -272,11 +287,11 @@ impl fmt::Debug for RecvWr<'_> {
 }
 
 impl<'a> RecvWr<'a> {
-    pub fn new(local: &[MrSlice<'a, '_>], wr_id: u64, signal: bool) -> Self {
+    pub fn new(local: &[MrSlice<'a, '_>], wr_id: u64) -> Self {
         Self(WrBase {
             local: build_sgl(local),
             wr_id,
-            signal,
+            signal: true,
             marker: PhantomData,
         })
     }

@@ -1,6 +1,7 @@
+use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::{fmt, io, mem, ptr};
+use std::{fmt, io, ptr};
 
 use super::context::Context;
 
@@ -216,6 +217,7 @@ pub enum WcStatus {
 impl From<u32> for WcStatus {
     fn from(wc_status: u32) -> Self {
         match wc_status {
+            // SAFETY: Valid status codes in [`ibv_wc_status`] are contiguous.
             x if x <= ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE => unsafe { std::mem::transmute(x) },
             x => panic!("invalid wc status: {}", x),
         }
@@ -229,11 +231,7 @@ impl From<u32> for WcStatus {
 #[repr(transparent)]
 pub struct Wc(ibv_wc);
 
-/// Work completions are [trivially copyable](https://en.cppreference.com/w/cpp/named_req/TriviallyCopyable)
-/// and is thus safe to send to another thread.
 unsafe impl Send for Wc {}
-/// Work completions are [trivially copyable](https://en.cppreference.com/w/cpp/named_req/TriviallyCopyable)
-/// and is thus safe to share between threads.
 unsafe impl Sync for Wc {}
 
 impl Wc {
@@ -277,13 +275,15 @@ impl Wc {
     #[inline]
     pub fn imm(&self) -> Option<u32> {
         if (self.0.wc_flags & ibv_wc_flags::IBV_WC_WITH_IMM.0) != 0 {
-            unsafe { self.0.imm_data_invalidated_rkey_union.imm_data as u32 }.into()
+            // SAFETY: read to a union that contains only `u32` fields is safe.
+            Some(unsafe { self.0.imm_data_invalidated_rkey_union.imm_data as u32 })
         } else {
             None
         }
     }
 
-    /// Get the immediate data, without checking the validity.
+    /// Get the immediate data, without checking whether the work completion
+    /// really carries an immediate.
     #[inline]
     pub unsafe fn imm_unchecked(&self) -> u32 {
         self.0.imm_data_invalidated_rkey_union.imm_data as u32
@@ -293,6 +293,7 @@ impl Wc {
 impl Default for Wc {
     /// Create a zeroed work completion entry.
     fn default() -> Self {
+        // SAFETY: zero-initializing a POD type is safe.
         unsafe { std::mem::zeroed() }
     }
 }
@@ -308,6 +309,7 @@ impl fmt::Debug for Wc {
 
 impl Clone for Wc {
     fn clone(&self) -> Self {
+        // SAFETY: byte-wise copy of a POD type is safe.
         unsafe {
             let mut wc = mem::zeroed();
             ptr::copy_nonoverlapping(&self.0, &mut wc, 1);
@@ -335,6 +337,7 @@ impl fmt::Debug for CqInner {
 
 impl Drop for CqInner {
     fn drop(&mut self) {
+        // SAFETY: FFI.
         unsafe { ibv_destroy_cq(self.cq.as_ptr()) };
     }
 }
@@ -355,12 +358,19 @@ pub struct Cq {
 
 impl Cq {
     /// The default CQ depth.
-    pub const DEFAULT_CQ_DEPTH: i32 = 128;
+    pub const DEFAULT_CQ_DEPTH: u32 = 128;
 
     /// Create a new completion queue.
-    pub fn new(ctx: Context, depth: i32) -> Result<Self> {
+    pub fn new(ctx: Context, capacity: u32) -> Result<Self> {
+        // SAFETY: FFI.
         let cq = NonNull::new(unsafe {
-            ibv_create_cq(ctx.as_ptr(), depth, ptr::null_mut(), ptr::null_mut(), 0)
+            ibv_create_cq(
+                ctx.as_raw(),
+                capacity as i32,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+            )
         })
         .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
 
@@ -370,7 +380,7 @@ impl Cq {
     }
 
     /// Get the underlying `ibv_cq` pointer.
-    pub fn as_ptr(&self) -> *mut ibv_cq {
+    pub fn as_raw(&self) -> *mut ibv_cq {
         self.inner.cq.as_ptr()
     }
 
@@ -379,15 +389,54 @@ impl Cq {
         self.inner.ctx.clone()
     }
 
-    /// Non-blocking poll.
+    /// Get the underlying `Context` as reference. This should be preferred
+    /// over `context()` when possible to avoid unnecessary clones.
+    #[inline]
+    pub fn context_ref(&self) -> &Context {
+        &self.inner.ctx
+    }
+
+    /// Get the capacity of the completion queue.
+    #[inline]
+    pub fn capacity(&self) -> u32 {
+        // SAFETY: the pointer is valid as long as the `Cq` is alive.
+        (unsafe { (*self.inner.cq.as_ptr()).cqe }) as u32
+    }
+
+    /// Non-blockingly poll. Return the work completions polled.
     ///
-    /// Return the number of work completions polled.
-    /// It is possible that the number of polled work completions is less than `wc.len()` or even zero.
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entries.
     ///
-    /// **NOTE:** The validity of work completions beyond the number of polled work completions is not guaranteed.
-    /// For valid completions, it is not guaranteed that they are all success.
-    /// It is the caller's responsibility to check the status of each work completion.
-    pub fn poll(&self, wc: &mut [Wc]) -> Result<i32> {
+    /// **NOTE:** This method will try to poll as many completions as possible
+    /// from the completion queue, incurring allocation overheads. For a more
+    /// efficient poll with a smaller pre-allocated buffer, use `poll_some` or
+    /// `poll_into`.
+    #[inline]
+    pub fn poll(&self) -> Result<Vec<Wc>> {
+        self.poll_some(self.capacity())
+    }
+
+    /// Non-blockingly poll with a limited number of expected work completions.
+    /// Return the work completions polled.
+    /// This method should be preferred over `poll` when possible to avoid
+    /// unnecessary allocation overheads.
+    ///
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entries.
+    #[inline]
+    pub fn poll_some(&self, num: u32) -> Result<Vec<Wc>> {
+        let mut wc = <Vec<Wc>>::with_capacity(num as usize);
+        // SAFETY: extending the vector to a pre-allocated length.
+        // Temporarily, they will contain uninitialized values. At the time of
+        // the `truncate` call, the vector will be shrunk to the actual number
+        // of polled work completions, and the uninitialized values will be
+        // dropped.
+        unsafe {
+            wc.set_len(num as usize);
+        }
+
+        // SAFETY: FFI, and that `Wc` is transparent over `ibv_wc`.
         let num = unsafe {
             ibv_poll_cq(
                 self.inner.cq.as_ptr(),
@@ -395,53 +444,149 @@ impl Cq {
                 wc.as_mut_ptr().cast(),
             )
         };
-
-        if num < 0 {
-            Err(anyhow::anyhow!(io::Error::from_raw_os_error(num)))
+        if num >= 0 {
+            wc.truncate(num as usize);
+            Ok(wc)
         } else {
-            Ok(num)
+            Err(anyhow::anyhow!(io::Error::from_raw_os_error(num)))
         }
     }
 
-    /// Blocking poll until `wc.len()` work completions are polled.
+    /// Non-blockingly poll one work completion. Return the work completion
+    /// polled.
+    /// This method should be preferred over `poll` and `poll_some` when you
+    /// only have one work completion to poll to avoid all unnecessary
+    /// overheads.
     ///
-    /// **NOTE:** The validity of work completions beyond the number of polled work completions is not guaranteed.
-    /// For valid completions, it is not guaranteed that they are all success.
-    /// It is the caller's responsibility to check the status of each work completion.
-    pub fn poll_blocking(&self, wc: &mut [Wc]) -> Result<()> {
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entry.
+    #[inline(always)]
+    pub fn poll_one(&self) -> Result<Option<Wc>> {
+        let mut wc = <MaybeUninit<Wc>>::uninit();
+        // SAFETY: FFI
+        let num = unsafe { ibv_poll_cq(self.inner.cq.as_ptr(), 1, wc.as_mut_ptr().cast()) };
+        if num >= 0 {
+            Ok(if num == 0 {
+                None
+            } else {
+                // SAFETY: `ibv_poll_cq` returning 1 means `wc` is initialized.
+                Some(unsafe { wc.assume_init() })
+            })
+        } else {
+            Err(anyhow::anyhow!(io::Error::from_raw_os_error(num)))
+        }
+    }
+
+    /// Non-blockingly poll into the given buffer. Return the number of work
+    /// completions polled.
+    ///
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entries.
+    ///
+    /// **NOTE:** It is possible that the number of polled work completions is
+    /// less than `wc.len()` or even zero. The validity of work completions
+    /// beyond the number of polled work completions is not guaranteed.
+    #[inline]
+    pub fn poll_into(&self, wc: &mut [Wc]) -> Result<u32> {
+        // SAFETY: FFI, and that `Wc` is transparent over `ibv_wc`.
+        let num = unsafe {
+            ibv_poll_cq(
+                self.inner.cq.as_ptr(),
+                wc.len() as i32,
+                wc.as_mut_ptr().cast(),
+            )
+        };
+        if num >= 0 {
+            Ok(num as u32)
+        } else {
+            Err(anyhow::anyhow!(io::Error::from_raw_os_error(num)))
+        }
+    }
+
+    /// Non-blockingly poll one work completion into the given work completion.
+    /// Return the number of work completions polled.
+    /// This method should be preferred over `poll_into` when you only have one
+    /// work completion to poll to avoid all unnecessary overheads.
+    ///
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entry.
+    ///
+    /// **NOTE:** If this poll is not successful whether because some error
+    /// occurred or simply no completion has arrived yet, the validity of the
+    /// work completion is not guaranteed.
+    #[inline(always)]
+    pub fn poll_one_into(&self, wc: &mut Wc) -> Result<u32> {
+        // SAFETY: FFI
+        let num = unsafe { ibv_poll_cq(self.inner.cq.as_ptr(), 1, (wc as *mut Wc).cast()) };
+        if num >= 0 {
+            Ok(num as u32)
+        } else {
+            Err(anyhow::anyhow!(io::Error::from_raw_os_error(num)))
+        }
+    }
+
+    /// Blockingly poll until a given number of work completion are polled.
+    ///
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entries.
+    pub fn poll_blocking(&self, num: u32) -> Result<Vec<Wc>> {
+        let mut wc = <Vec<Wc>>::with_capacity(num as usize);
+        // SAFETY: extending the vector to a pre-allocated length.
+        // Temporarily, they will contain uninitialized values. At the time of
+        // return, they will all be replaced by valid work completions.
+        unsafe {
+            wc.set_len(num as usize);
+        }
+
+        let mut polled = 0;
+        while polled < (num as usize) {
+            let n = self.poll_into(&mut wc[polled..])?;
+            polled += n as usize;
+        }
+        Ok(wc)
+    }
+
+    /// Blockingly poll one work completion. Return the work completion polled.
+    /// This method should be preferred over `poll_blocking` when you only have
+    /// one work completion to poll to avoid all unnecessary overheads.
+    ///
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entry.
+    pub fn poll_one_blocking(&self) -> Result<Wc> {
+        let mut wc = <MaybeUninit<Wc>>::uninit();
+        // SAFETY: this call never reads `wc` and thus never touches
+        // uninitialized data.
+        self.poll_one_blocking_into(unsafe { wc.assume_init_mut() })?;
+        // SAFETY: `wc` is initialized by `poll_one_blocking_into`.
+        Ok(unsafe { wc.assume_init() })
+    }
+
+    /// Blockingly poll until the given work completion buffer is filled.
+    ///
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entries.
+    ///
+    /// **NOTE:** It is possible that the number of polled work completions is
+    /// less than `wc.len()` or even zero. The validity of work completions
+    /// beyond the number of polled work completions is not guaranteed.
+    pub fn poll_blocking_into(&self, wc: &mut [Wc]) -> Result<()> {
         let num = wc.len();
         let mut polled = 0;
         while polled < num {
-            let n = self.poll(&mut wc[polled..])?;
+            let n = self.poll_into(&mut wc[polled..])?;
             polled += n as usize;
         }
         Ok(())
     }
 
-    /// Poll a specified number of work completions but consume them.
+    /// Blockingly poll one work completion into the given work completion.
     ///
-    /// Return the number of work completions polled.
-    /// It is possible that the number of polled work completions is less than `num` or even zero.
-    ///
-    /// This method checks the status of each polled work completion and returns an error if any of them is not success.
-    pub fn poll_nocqe(&self, num: usize) -> Result<i32> {
-        let mut wc = vec![Wc::default(); num];
-        let ret = self.poll(&mut wc)?;
-
-        for i in 0..ret {
-            wc[i as usize].result()?;
-        }
-        Ok(ret)
-    }
-
-    /// Blocking poll a specified number of work completions but consume them.
-    ///
-    /// This method checks the status of each polled work completion and returns an error if any of them is not success.
-    pub fn poll_nocqe_blocking(&self, num: usize) -> Result<()> {
-        let mut wc = vec![Wc::default(); num];
-        self.poll_blocking(&mut wc)?;
-        for i in 0..num {
-            wc[i].result()?;
+    /// It is the caller's responsibility to check the status codes of the
+    /// returned work completion entry.
+    pub fn poll_one_blocking_into(&self, wc: &mut Wc) -> Result<()> {
+        let mut polled = 0;
+        while polled < 1 {
+            polled += self.poll_one_into(wc)?;
         }
         Ok(())
     }

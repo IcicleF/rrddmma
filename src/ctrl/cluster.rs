@@ -225,7 +225,7 @@ impl Cluster {
         let shared_scq = if share_send_cq {
             Some(Cq::new(
                 pd.context(),
-                Cq::DEFAULT_CQ_DEPTH * self.size() as i32,
+                Cq::DEFAULT_CQ_DEPTH * self.size() as u32,
             )?)
         } else {
             None
@@ -233,7 +233,7 @@ impl Cluster {
         let shared_rcq = if share_recv_cq {
             Some(Cq::new(
                 pd.context(),
-                Cq::DEFAULT_CQ_DEPTH * self.size() as i32,
+                Cq::DEFAULT_CQ_DEPTH * self.size() as u32,
             )?)
         } else {
             None
@@ -389,7 +389,7 @@ impl Cluster {
         let shared_rcq = if share_recv_cq {
             Some(Cq::new(
                 pd.context(),
-                Cq::DEFAULT_CQ_DEPTH * self.size() as i32,
+                Cq::DEFAULT_CQ_DEPTH * self.size() as u32,
             )?)
         } else {
             None
@@ -440,12 +440,12 @@ impl Cluster {
 
 /// Provide a helper trait to remove the [`QpPeer`]s from the return value of
 /// [`Cluster::connect_fc`].
-pub trait DiscardQpPeer {
+pub trait DiscardPeers {
     /// Remove [`QpPeer`]s from the return value of [`Cluster::connect_fc`].
     fn discard_peers(self) -> Vec<Option<Vec<Qp>>>;
 }
 
-impl DiscardQpPeer for Vec<Option<Vec<(Qp, Option<QpPeer>)>>> {
+impl DiscardPeers for Vec<Option<Vec<(Qp, Option<QpPeer>)>>> {
     fn discard_peers(self) -> Vec<Option<Vec<Qp>>> {
         self.into_iter()
             .map(|x| x.map(|y| y.into_iter().map(|(qp, _)| qp).collect()))

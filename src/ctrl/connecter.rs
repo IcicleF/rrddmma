@@ -59,6 +59,14 @@ pub struct Connecter {
 }
 
 impl Connecter {
+    /// Locally connect two QPs, without involving any networking.
+    pub fn connect_local(first: &Qp, second: &Qp) -> Result<()> {
+        let ep_first = first.endpoint();
+        let ep_second = second.endpoint();
+
+        first.connect(&ep_second).and(second.connect(&ep_first))
+    }
+
     /// The default TCP port to use.
     pub const DEFAULT_PORT: u16 = 13337;
 
@@ -139,7 +147,7 @@ impl Connecter {
             return Err(anyhow::anyhow!("no connection established"));
         }
 
-        let ep = QpEndpoint::from(qp);
+        let ep = qp.endpoint();
         let ep = serde_json::to_string(&ep).with_context(|| "failed to serialize QP info")?;
 
         let mut stream = self.stream.as_ref().unwrap();
@@ -183,10 +191,7 @@ impl Connecter {
             return Err(anyhow::anyhow!("no connection established"));
         }
 
-        let ep = qps
-            .iter()
-            .map(|qp| QpEndpoint::from(qp))
-            .collect::<Vec<_>>();
+        let ep = qps.iter().map(|qp| qp.endpoint()).collect::<Vec<_>>();
         let ep = serde_json::to_string(&ep).with_context(|| "failed to serialize QP info vec")?;
 
         let mut stream = self.stream.as_ref().unwrap();

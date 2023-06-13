@@ -2,8 +2,10 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 use std::{fmt, io, mem};
 
+use super::cq::Cq;
 use super::device::DeviceList;
 use super::gid::Gid;
+use super::pd::Pd;
 use crate::utils::interop::*;
 
 use anyhow::{Context as _, Result};
@@ -34,6 +36,7 @@ impl fmt::Debug for ContextInner {
 
 impl Drop for ContextInner {
     fn drop(&mut self) {
+        // SAFETY: FFI.
         unsafe { ibv_close_device(self.ctx.as_ptr()) };
     }
 }
@@ -61,14 +64,17 @@ impl Context {
         let dev = dev_list
             .iter()
             .find(|dev| dev_name.map_or(true, |name| dev.name() == name))
-            .ok_or(anyhow::anyhow!("device not found"))?;
+            .ok_or_else(|| anyhow::anyhow!("device not found"))?;
 
-        let ctx = NonNull::new(unsafe { ibv_open_device(dev.as_ptr()) })
-            .ok_or(anyhow::anyhow!(io::Error::last_os_error()))?;
+        // SAFETY: FFI.
+        let ctx = NonNull::new(unsafe { ibv_open_device(dev.as_raw()) })
+            .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
         drop(dev_list);
 
         let dev_attr = {
+            // SAFETY: will be filled by the FFI call.
             let mut dev_attr = unsafe { mem::zeroed() };
+            // SAFETY: FFI.
             let ret = unsafe { ibv_query_device(ctx.as_ptr(), &mut dev_attr) };
             if ret != 0 {
                 return from_c_err(ret).with_context(|| "failed to query device attributes");
@@ -80,7 +86,9 @@ impl Context {
         }
 
         let port_attr = {
+            // SAFETY: will be filled by the FFI call.
             let mut port_attr = unsafe { mem::zeroed() };
+            // SAFETY: FFI.
             let ret = unsafe { ___ibv_query_port(ctx.as_ptr(), port_num, &mut port_attr) };
             if ret != 0 {
                 return from_c_err(ret).with_context(|| "failed to query port attributes");
@@ -92,7 +100,9 @@ impl Context {
         }
 
         let gid = {
+            // SAFETY: will be filled by the FFI call.
             let mut gid = unsafe { mem::zeroed() };
+            // SAFETY: FFI.
             let ret = unsafe { ibv_query_gid(ctx.as_ptr(), port_num, gid_index as i32, &mut gid) };
             if ret != 0 {
                 return from_c_err(ret).with_context(|| "failed to query GID");
@@ -114,7 +124,7 @@ impl Context {
 
     /// Get the underlying `ibv_context` pointer.
     #[inline]
-    pub fn as_ptr(&self) -> *mut ibv_context {
+    pub fn as_raw(&self) -> *mut ibv_context {
         self.inner.ctx.as_ptr()
     }
 
@@ -142,11 +152,32 @@ impl Context {
         self.inner.gid_index
     }
 
-    /// Get the path MTU of the specified port.
-    ///
-    /// **NOTE:** the return value is an integer and should be viewed as a value of the `ibv_mtu` enum.
+    /// Get the active path MTU of the specified port in bytes.
     #[inline]
-    pub fn active_mtu(&self) -> u32 {
+    pub fn mtu(&self) -> usize {
+        match self.inner.port_attr.active_mtu {
+            ibv_mtu::IBV_MTU_256 => 256,
+            ibv_mtu::IBV_MTU_512 => 512,
+            ibv_mtu::IBV_MTU_1024 => 1024,
+            ibv_mtu::IBV_MTU_2048 => 2048,
+            ibv_mtu::IBV_MTU_4096 => 4096,
+            _ => unsafe { std::hint::unreachable_unchecked() },
+        }
+    }
+
+    /// Get the active path MTU of the specified port as an `ibv_mtu` value.
+    #[inline]
+    pub(crate) fn mtu_raw(&self) -> ibv_mtu::Type {
         self.inner.port_attr.active_mtu
+    }
+
+    /// Allocate a protection domain on this context.
+    pub fn alloc_pd(&self) -> Result<Pd> {
+        Pd::new(self.clone())
+    }
+
+    /// Create a completion queue on this context.
+    pub fn create_cq(&self, capacity: u32) -> Result<Cq> {
+        Cq::new(self.clone(), capacity)
     }
 }
