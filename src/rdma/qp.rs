@@ -8,6 +8,7 @@ use super::gid::Gid;
 use super::mr::*;
 use super::pd::Pd;
 use super::remote_mem::*;
+use super::types::*;
 use super::wr::*;
 use crate::utils::{interop::*, select::*};
 
@@ -214,6 +215,21 @@ impl QpInitAttr {
         }
     }
 
+    /// Generate default UD queue pair initialization attributes, in which:
+    ///
+    /// - the send CQ and the receive CQ are the same,
+    /// - QP capabilities are set to the default values, and
+    /// - work requests are NOT signaled by default.
+    pub fn default_ud(cq: Cq) -> Self {
+        QpInitAttr {
+            send_cq: cq.clone(),
+            recv_cq: cq,
+            cap: QpCaps::default(),
+            qp_type: QpType::Ud,
+            sq_sig_all: false,
+        }
+    }
+
     /// Translate the initialization attributes into [`ibv_qp_init_attr`].
     pub(crate) fn to_actual_init_attr(&self) -> ibv_qp_init_attr {
         ibv_qp_init_attr {
@@ -238,15 +254,15 @@ impl QpInitAttr {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct QpEndpoint {
     pub gid: Gid,
-    pub port_num: u8,
-    pub lid: u16,
-    pub qpn: u32,
-    pub psn: u32,
-    pub qkey: u32,
+    pub port_num: PortNum,
+    pub lid: Lid,
+    pub qpn: Qpn,
+    pub psn: Psn,
+    pub qkey: QKey,
 }
 
 impl QpEndpoint {
-    pub fn new(gid: Gid, port_num: u8, lid: u16, qpn: u32, psn: u32, qkey: u32) -> Self {
+    pub fn new(gid: Gid, port_num: PortNum, lid: Lid, qpn: Qpn, psn: Psn, qkey: QKey) -> Self {
         QpEndpoint {
             gid,
             port_num,
@@ -349,7 +365,7 @@ pub struct Qp {
 
 impl fmt::Debug for Qp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("Qp<{:p}>", self.as_ptr()))
+        f.write_fmt(format_args!("Qp<{:p}>", self.as_raw()))
     }
 }
 
@@ -369,7 +385,7 @@ impl Qp {
 
     /// Get the underlying `ibv_qp` pointer.
     #[inline]
-    pub fn as_ptr(&self) -> *mut ibv_qp {
+    pub fn as_raw(&self) -> *mut ibv_qp {
         self.inner.qp.as_ptr()
     }
 
@@ -418,8 +434,8 @@ impl Qp {
 
     /// Get the capabilities of this QP.
     #[inline]
-    pub fn caps(&self) -> QpCaps {
-        self.inner.init_attr.cap
+    pub fn caps(&self) -> &QpCaps {
+        &self.inner.init_attr.cap
     }
 
     /// Get endpoint information of this QP.
@@ -586,6 +602,10 @@ impl Qp {
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
     pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
+        if ops.len() == 0 {
+            return Ok(());
+        }
+
         // Safety: we only hold references to the `RecvWr`s, whose lifetimes
         // can only outlive this function. `ibv_post_recv` is used inside this
         // function, so the work requests are guaranteed to be valid.
@@ -597,6 +617,26 @@ impl Qp {
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_recv(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::recv_err_explanation)
+    }
+
+    /// Post a list of raw receive work requests.
+    /// This enables doorbell batching and can reduce doorbell ringing overheads.
+    ///
+    /// ### Safety
+    ///
+    /// - Every work request must refer to valid memory address.
+    /// - `head` must lead a valid chain of work requests of valid length.
+    #[inline]
+    pub unsafe fn post_raw_recv(&self, head: &RawRecvWr) -> Result<()> {
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_recv(
+                self.inner.qp.as_ptr(),
+                &head as *const _ as *mut _,
+                &mut bad_wr,
+            )
         };
         from_c_ret_explained(ret, Self::recv_err_explanation)
     }
@@ -626,8 +666,8 @@ impl Qp {
         &self,
         local: &[MrSlice],
         peer: Option<&QpPeer>,
-        imm: Option<u32>,
-        wr_id: u64,
+        imm: Option<ImmData>,
+        wr_id: WrId,
         signal: bool,
         inline: bool,
     ) -> Result<()> {
@@ -679,7 +719,7 @@ impl Qp {
         &self,
         local: &[MrSlice],
         remote: &RemoteMem,
-        wr_id: u64,
+        wr_id: WrId,
         signal: bool,
     ) -> Result<()> {
         if !signal && self.inner.init_attr.sq_sig_all {
@@ -723,8 +763,8 @@ impl Qp {
         &self,
         local: &[MrSlice],
         remote: &RemoteMem,
-        wr_id: u64,
-        imm: Option<u32>,
+        wr_id: WrId,
+        imm: Option<ImmData>,
         signal: bool,
     ) -> Result<()> {
         if !signal && self.inner.init_attr.sq_sig_all {
@@ -777,7 +817,7 @@ impl Qp {
         remote: &RemoteMem,
         current: u64,
         new: u64,
-        wr_id: u64,
+        wr_id: WrId,
         signal: bool,
     ) -> Result<()> {
         if !signal && self.inner.init_attr.sq_sig_all {
@@ -839,7 +879,7 @@ impl Qp {
         local: &MrSlice,
         remote: &RemoteMem,
         add: u64,
-        wr_id: u64,
+        wr_id: WrId,
         signal: bool,
     ) -> Result<()> {
         if !signal && self.inner.init_attr.sq_sig_all {
@@ -892,8 +932,12 @@ impl Qp {
     /// Post a list of send work requests to the queue pair in order.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
-    pub fn post_send(&self, ops: &[SendWr<'_, '_>]) -> Result<()> {
-        if ops.iter().any(|wr| wr.is_signaled()) && self.inner.init_attr.sq_sig_all {
+    pub fn post_send(&self, ops: &[SendWr<'_>]) -> Result<()> {
+        if ops.len() == 0 {
+            return Ok(());
+        }
+
+        if ops.iter().any(|wr| !wr.is_signaled()) && self.inner.init_attr.sq_sig_all {
             log::warn!(
                 "QP configured to signal all sends despite some work requests ask to not signal"
             );
@@ -918,10 +962,30 @@ impl Qp {
                 .filter(|(_, wr)| (*wr) as *const _ == bad_wr)
                 .next();
             match failed {
-                Some((i, _)) => format!("failed at work request #{}", i),
-                None => "failed at unknown work request".to_string(),
+                Some((i, _)) => format!("failed at send work request #{}", i),
+                None => "failed at unknown send work request".to_string(),
             }
         })
+    }
+
+    /// Post a list of raw send work requests.
+    /// This enables doorbell batching and can reduce doorbell ringing overheads.
+    ///
+    /// ### Safety
+    ///
+    /// - Every work request must refer to valid memory address.
+    /// - `wr_head` must lead a valid chain of work requests of valid length.
+    #[inline]
+    pub unsafe fn post_raw_send(&self, head: &RawSendWr) -> Result<()> {
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(
+                self.inner.qp.as_ptr(),
+                &head as *const _ as *mut _,
+                &mut bad_wr,
+            )
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 }
 

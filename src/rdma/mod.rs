@@ -24,3 +24,6 @@ pub mod remote_mem;
 
 // RDMA work requests.
 pub mod wr;
+
+// Related types.
+pub mod types;

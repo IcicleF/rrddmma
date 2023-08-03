@@ -25,3 +25,6 @@ libc = "0.2"
 
 [dev-dependencies]
 futures = "0.3"
+
+[features]
+full_name = []

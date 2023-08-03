@@ -164,7 +164,8 @@ impl<'mem> Mr<'mem> {
     /// Get a memory region slice that represents the entire memory area.
     #[inline]
     pub fn as_slice(&self) -> MrSlice {
-        MrSlice::new(self, 0..self.len())
+        // SAFETY: the range is naturally contained in the memory area.
+        unsafe { MrSlice::new(self, 0..self.len()) }
     }
 
     /// Get a memory region slice that represents the specified range of
@@ -186,7 +187,8 @@ impl<'mem> Mr<'mem> {
         };
 
         if start <= end && end <= self.len() {
-            Some(MrSlice::new(self, start..end))
+            // SAFETY: the range is guaranteed to be contained in the memory area.
+            Some(unsafe { MrSlice::new(self, start..end) })
         } else {
             None
         }
@@ -197,8 +199,8 @@ impl<'mem> Mr<'mem> {
     /// is not contained within the MR or the specified slice
     /// `(ptr..(ptr + len))` is out of bounds.
     #[inline]
-    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice {
-        let offset = ptr as usize - self.addr() as usize;
+    pub unsafe fn get_slice_from_ptr(&self, pointer: *const u8, len: usize) -> MrSlice {
+        let offset = pointer as usize - self.addr() as usize;
         self.get_slice_unchecked(offset..(offset + len))
     }
 
@@ -256,17 +258,14 @@ where
 /// A slice corresponds to an RDMA scatter-gather list entry, which can be used
 /// in RDMA data-plane verbs.
 #[derive(Debug, Clone)]
-pub struct MrSlice<'a, 'mem>
-where
-    'mem: 'a,
-{
-    mr: &'a Mr<'mem>,
+pub struct MrSlice<'a> {
+    mr: &'a Mr<'a>,
     range: Range<usize>,
 }
 
-impl<'a, 'mem> MrSlice<'a, 'mem> {
+impl<'a> MrSlice<'a> {
     /// Create a new memory region slice of the given MR and range.
-    pub(crate) fn new(mr: &'a Mr<'mem>, range: Range<usize>) -> Self {
+    pub unsafe fn new(mr: &'a Mr<'a>, range: Range<usize>) -> Self {
         Self { mr, range }
     }
 
@@ -289,13 +288,13 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
 
     /// Get the underlying `Mr`.
     #[inline]
-    pub fn mr(&self) -> &Mr<'mem> {
+    pub fn mr(&self) -> &Mr<'a> {
         &self.mr
     }
 
     /// Sub-slice this slice. Return `None` if the range is out of bounds.
     #[inline]
-    pub fn get_slice(&self, r: impl RangeBounds<usize>) -> Option<MrSlice<'a, 'mem>> {
+    pub fn get_slice(&self, r: impl RangeBounds<usize>) -> Option<MrSlice<'a>> {
         let start = match r.start_bound() {
             Bound::Included(&s) => s,
             Bound::Excluded(&s) => s + 1,
@@ -308,10 +307,13 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
         };
 
         if start <= end && end <= self.len() {
-            Some(MrSlice::new(
-                self.mr,
-                (self.range.start + start)..(self.range.start + end),
-            ))
+            // SAFETY: the range is guaranteed to be contained in the slice.
+            Some(unsafe {
+                MrSlice::new(
+                    self.mr,
+                    (self.range.start + start)..(self.range.start + end),
+                )
+            })
         } else {
             None
         }
@@ -322,8 +324,8 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
     /// pointer is not contained within this slice or `(ptr..(ptr + len))`
     /// is out of bounds with regard to this slice.
     #[inline]
-    pub unsafe fn get_slice_from_ptr(&self, ptr: *const u8, len: usize) -> MrSlice<'a, 'mem> {
-        let offset = ptr as usize - self.addr() as usize;
+    pub unsafe fn get_slice_from_ptr(&self, pointer: *const u8, len: usize) -> MrSlice<'a> {
+        let offset = pointer as usize - self.addr() as usize;
         self.get_slice_unchecked(offset..(offset + len))
     }
 
@@ -331,7 +333,7 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
     /// the memory area within this memory slice. The behavior is undefined
     /// if the range is out of bounds.
     #[inline]
-    pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice<'a, 'mem> {
+    pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice<'a> {
         let start = match r.start_bound() {
             Bound::Included(&s) => s,
             Bound::Excluded(&s) => s + 1,
@@ -366,7 +368,7 @@ impl<'a, 'mem> MrSlice<'a, 'mem> {
     }
 }
 
-impl<'a, 'mem, I> Index<I> for MrSlice<'a, 'mem>
+impl<'a, I> Index<I> for MrSlice<'a>
 where
     I: SliceIndex<[u8]>,
 {
@@ -381,8 +383,8 @@ where
     }
 }
 
-impl From<MrSlice<'_, '_>> for ibv_sge {
-    fn from(slice: MrSlice<'_, '_>) -> Self {
+impl From<MrSlice<'_>> for ibv_sge {
+    fn from(slice: MrSlice<'_>) -> Self {
         Self {
             addr: slice.addr() as u64,
             length: slice.len() as u32,
@@ -391,8 +393,8 @@ impl From<MrSlice<'_, '_>> for ibv_sge {
     }
 }
 
-impl From<MrSlice<'_, '_>> for NonNull<u8> {
-    fn from(slice: MrSlice<'_, '_>) -> Self {
+impl From<MrSlice<'_>> for NonNull<u8> {
+    fn from(slice: MrSlice<'_>) -> Self {
         // SAFETY: the address is guaranteed to be non-null.
         unsafe { NonNull::new_unchecked(slice.addr()) }
     }

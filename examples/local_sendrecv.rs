@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
     ctrl::Connecter::new(None)?.connect(&qp)?;
 
     // Receive a message from the client.
-    let mem = RegisteredMem::new(pd.clone(), 4096)?;
+    let mem = RegisteredMem::new(pd, 4096)?;
     qp.recv(&[mem.as_slice()], 0)?;
     let wc = qp.rcq().poll_one_blocking()?;
     println!("{}", String::from_utf8_lossy(&mem[..wc.result()?]));

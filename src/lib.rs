@@ -47,7 +47,7 @@ mod rdma_export {
     pub use super::rdma::pd::Pd;
     pub use super::rdma::qp::{Qp, QpCaps, QpEndpoint, QpInitAttr, QpPeer, QpState, QpType};
     pub use super::rdma::remote_mem::RemoteMem;
-    pub use super::rdma::wr::{RecvWr, SendWr, SendWrDetails};
+    pub use super::rdma::wr::{RawRecvWr, RawSendWr, RecvWr, SendWr, SendWrDetails};
 }
 
 #[cfg(feature = "full_name")]
@@ -62,11 +62,12 @@ mod rdma_export {
     pub use super::rdma::pd::Pd as ProtectionDomain;
     pub use super::rdma::qp::{
         Qp as QueuePair, QpCaps as QueuePairCapabilities, QpEndpoint as QueuePairEndpoint,
-        QpInitAttr as QueuePairInitAttr, QpPeer as QueuePairPeer, QpState as QueuePairState,
+        QpInitAttr as QueuePairInitAttributes, QpPeer as QueuePairPeer, QpState as QueuePairState,
         QpType as QueuePairType,
     };
     pub use super::rdma::remote_mem::RemoteMem as RemoteMemory;
     pub use super::rdma::wr::{
+        RawRecvWr as RawReceiveWorkRequest, RawSendWr as RawSendWorkRequest,
         RecvWr as ReceiveWorkRequest, SendWr as SendWorkRequest,
         SendWrDetails as SendWorkRequestDetails,
     };
@@ -74,6 +75,9 @@ mod rdma_export {
 
 /// Export RDMA data-plane functionalities to the top-level.
 pub use rdma_export::*;
+
+/// Export types to the top-level.
+pub use rdma::types;
 
 /// Connection management utilities.
 pub mod ctrl;
