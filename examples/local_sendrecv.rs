@@ -2,7 +2,7 @@ use rrddmma::{wrap::RegisteredMem, *};
 use std::{net::Ipv4Addr, thread};
 
 fn client(pd: Pd) -> anyhow::Result<()> {
-    let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
+    let cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
     let qp = Qp::new(pd.clone(), QpInitAttr::default_rc(cq))?;
 
     ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&qp)?;
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
         thread::spawn(move || client(pd))
     };
 
-    let cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
+    let cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
     let qp = Qp::new(pd.clone(), QpInitAttr::default_rc(cq))?;
 
     ctrl::Connecter::new(None)?.connect(&qp)?;

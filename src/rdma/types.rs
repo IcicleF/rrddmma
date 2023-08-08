@@ -1,7 +1,5 @@
 //! Type aliases and re-exports for RDMA-related operations.
 
-use rdma_sys;
-
 /// Port number is a [`u8`] that identifies a port on a local switch or an HCA.
 pub type PortNum = u8;
 
@@ -31,13 +29,5 @@ pub type ImmData = u32;
 
 /// Re-export of [`rdma_sys`] types.
 pub mod sys {
-    pub use rdma_sys::ibv_context;
-    pub use rdma_sys::ibv_cq;
-    pub use rdma_sys::ibv_mr;
-    pub use rdma_sys::ibv_pd;
-    pub use rdma_sys::ibv_qp;
-    pub use rdma_sys::ibv_recv_wr;
-    pub use rdma_sys::ibv_send_wr;
-    pub use rdma_sys::ibv_sge;
-    pub use rdma_sys::ibv_wc;
+    pub use rdma_sys::*;
 }

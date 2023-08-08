@@ -30,9 +30,13 @@ impl RegisteredMem {
     pub fn new(pd: Pd, len: usize) -> Result<Self> {
         // This should use the global allocator
         let buf = vec![0u8; len].into_boxed_slice();
+        Self::new_owned(pd, buf)
+    }
+
+    /// Take ownership of the provided memory region and register MR on it.
+    pub fn new_owned(pd: Pd, buf: Box<[u8]>) -> Result<Self> {
         let mr =
             unsafe { Mr::reg_with_ref(pd, buf.as_ptr() as *mut _, buf.len(), &PhantomData::<()>)? };
-
         Ok(Self { mr, buf })
     }
 
@@ -54,6 +58,12 @@ impl RegisteredMem {
     #[inline]
     pub fn len(&self) -> usize {
         self.buf.len()
+    }
+
+    /// Get the underlying [`Mr`].
+    #[inline]
+    pub fn mr<'a>(&'a self) -> &'a Mr<'a> {
+        &self.mr
     }
 
     /// Get a `MrSlice` that represents the whole memory region.

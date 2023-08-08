@@ -379,20 +379,13 @@ impl Cq {
         })
     }
 
-    /// Get the underlying `ibv_cq` pointer.
+    /// Get the underlying [`ibv_cq`] pointer.
     pub fn as_raw(&self) -> *mut ibv_cq {
         self.inner.cq.as_ptr()
     }
 
-    /// Get the underlying `Context`.
-    pub fn context(&self) -> Context {
-        self.inner.ctx.clone()
-    }
-
-    /// Get the underlying `Context` as reference. This should be preferred
-    /// over `context()` when possible to avoid unnecessary clones.
-    #[inline]
-    pub fn context_ref(&self) -> &Context {
+    /// Get the underlying [`Context`].
+    pub fn context(&self) -> &Context {
         &self.inner.ctx
     }
 
@@ -561,6 +554,19 @@ impl Cq {
         Ok(unsafe { wc.assume_init() })
     }
 
+    /// Blockingly wait until a work completion occurs and consume that
+    /// work request.
+    ///
+    /// ### Panics
+    ///
+    /// Panics if the work completion status is not success.
+    pub fn poll_one_blocking_consumed(&self) {
+        // SAFETY: `ibv_wc` is POD type.
+        let mut wc: ibv_wc = unsafe { mem::zeroed() };
+        while unsafe { ibv_poll_cq(self.inner.cq.as_ptr(), 1, &mut wc) } == 0 {}
+        assert_eq!(wc.status, ibv_wc_status::IBV_WC_SUCCESS);
+    }
+
     /// Blockingly poll until the given work completion buffer is filled.
     ///
     /// It is the caller's responsibility to check the status codes of the
@@ -585,8 +591,8 @@ impl Cq {
     /// returned work completion entry.
     pub fn poll_one_blocking_into(&self, wc: &mut Wc) -> Result<()> {
         let mut polled = 0;
-        while polled < 1 {
-            polled += self.poll_one_into(wc)?;
+        while polled == 0 {
+            polled = self.poll_one_into(wc)?;
         }
         Ok(())
     }

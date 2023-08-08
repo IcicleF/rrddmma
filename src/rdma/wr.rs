@@ -214,7 +214,7 @@ impl<'a> SendWr<'a> {
                 }
             }
             SendWrDetails::SendUd { peer, imm, inline } => {
-                wr.wr.ud = peer.as_ud_t();
+                wr.wr.ud = peer.ud();
                 fill_opcode_with_imm(
                     &mut wr,
                     imm,
@@ -267,6 +267,9 @@ impl<'a> SendWr<'a> {
 /// This type is useful when you really want to avoid any memory copy overheads
 /// (aside from those in the driver) when posting a send work request.
 pub struct RawSendWr(pub(crate) Box<Vec<ibv_sge>>, pub(crate) ibv_send_wr);
+
+unsafe impl Send for RawSendWr {}
+unsafe impl Sync for RawSendWr {}
 
 impl From<SendWr<'_>> for RawSendWr {
     fn from(wr: SendWr<'_>) -> Self {
@@ -347,6 +350,9 @@ impl<'a> RecvWr<'a> {
 /// This type is useful when you really want to avoid any memory copy overheads
 /// (aside from those in the driver) when posting a receive work request.
 pub struct RawRecvWr(pub(crate) Box<Vec<ibv_sge>>, pub(crate) ibv_recv_wr);
+
+unsafe impl Send for RawRecvWr {}
+unsafe impl Sync for RawRecvWr {}
 
 impl RawRecvWr {
     /// Get the raw scatter-gather list.

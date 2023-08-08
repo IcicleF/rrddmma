@@ -224,7 +224,7 @@ impl Cluster {
 
         let shared_scq = if share_send_cq {
             Some(Cq::new(
-                pd.context(),
+                pd.context().clone(),
                 Cq::DEFAULT_CQ_DEPTH * self.size() as u32,
             )?)
         } else {
@@ -232,7 +232,7 @@ impl Cluster {
         };
         let shared_rcq = if share_recv_cq {
             Some(Cq::new(
-                pd.context(),
+                pd.context().clone(),
                 Cq::DEFAULT_CQ_DEPTH * self.size() as u32,
             )?)
         } else {
@@ -250,12 +250,12 @@ impl Cluster {
                     let send_cq = if share_send_cq {
                         shared_scq.clone().unwrap()
                     } else {
-                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?
+                        Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?
                     };
                     let recv_cq = if share_recv_cq {
                         shared_rcq.clone().unwrap()
                     } else {
-                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?
+                        Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?
                     };
 
                     let qp = Qp::new(
@@ -388,7 +388,7 @@ impl Cluster {
 
         let shared_rcq = if share_recv_cq {
             Some(Cq::new(
-                pd.context(),
+                pd.context().clone(),
                 Cq::DEFAULT_CQ_DEPTH * self.size() as u32,
             )?)
         } else {
@@ -402,19 +402,19 @@ impl Cluster {
             if id < self.size() {
                 // Create QPs
                 let cli = {
-                    let send_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
-                    let recv_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
+                    let send_cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
+                    let recv_cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
                     Qp::new(
                         pd.clone(),
                         QpInitAttr::new(send_cq, recv_cq, QpCaps::default(), QpType::Rc, true),
                     )?
                 };
                 let svr = {
-                    let send_cq = Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?;
+                    let send_cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
                     let recv_cq = if share_recv_cq {
                         shared_rcq.clone().unwrap()
                     } else {
-                        Cq::new(pd.context(), Cq::DEFAULT_CQ_DEPTH)?
+                        Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?
                     };
                     Qp::new(
                         pd.clone(),

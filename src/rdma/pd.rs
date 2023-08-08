@@ -57,14 +57,7 @@ impl Pd {
 
     /// Get the underlying `Context`.
     #[inline]
-    pub fn context(&self) -> Context {
-        self.inner.ctx.clone()
-    }
-
-    /// Get the underlying `Context` as reference. This should be preferred
-    /// over `context()` when possible to avoid unnecessary clones.
-    #[inline]
-    pub fn context_ref(&self) -> &Context {
+    pub fn context(&self) -> &Context {
         &self.inner.ctx
     }
 
