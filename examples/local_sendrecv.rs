@@ -8,7 +8,7 @@ fn client(pd: Pd) -> anyhow::Result<()> {
     ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&qp)?;
 
     // Send the message to the server.
-    let mem = RegisteredMem::new_with_content(pd.clone(), "Hello, rrddmma!".as_bytes())?;
+    let mem = RegisteredMem::new_with_content(pd, "Hello, rrddmma!".as_bytes())?;
     qp.send(&[mem.as_slice()], None, None, 0, true, true)?;
     qp.scq().poll_one_blocking().and_then(|wc| wc.result())?;
     Ok(())
@@ -35,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     let mem = RegisteredMem::new(pd, 4096)?;
     qp.recv(&[mem.as_slice()], 0)?;
     let wc = qp.rcq().poll_one_blocking()?;
-    println!("{}", String::from_utf8_lossy(&mem[..wc.result()?]));
+    assert_eq!("Hello, rrddmma!", String::from_utf8_lossy(&mem[..wc.result()?]));
 
     cli.join().unwrap()?;
     Ok(())

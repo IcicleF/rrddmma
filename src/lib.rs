@@ -15,7 +15,7 @@
 //! management utilities in the [`ctrl`] mod. Most commonly-used ones include
 //! distributed barriers ([`ctrl::Barrier`]) and connection builders
 //! ([`ctrl::Connecter`]). Some higher-level wrappings of RDMA resources are
-//! in the [`wrap`] mod and is under continuous development.
+//! in the [`wrap`] mod and under continuous development.
 //!
 //! **WARNING: The interfaces are unstable and up to change!**
 //!
@@ -26,8 +26,6 @@
 //! ```rust
 #![doc = include_str!("../examples/local_sendrecv.rs")]
 //! ```
-//!
-//! It should print: `Hello, rrddmma!`
 //!
 //! [`rdma-sys`]: https://docs.rs/rdma-sys/latest/rdma_sys/
 
@@ -76,7 +74,7 @@ mod rdma_export {
 /// Export RDMA data-plane functionalities to the top-level.
 pub use rdma_export::*;
 
-/// Export types to the top-level.
+/// Type aliases and re-exports for RDMA-related operations.
 pub use rdma::types;
 
 /// Connection management utilities.
@@ -84,3 +82,129 @@ pub mod ctrl;
 
 /// Higher-level wrappings of RDMA resources.
 pub mod wrap;
+
+/// Re-export of [`rdma_sys`] types, modules, and functions.
+/// If you seek to use the raw RDMA C API, you may want to use this module.
+///
+/// In the root of this module, only those used in the library are re-exported.
+/// You can find the full list of re-exports in the [`entire`] submodule.
+pub mod sys {
+    /// RDMA atomics work request parameters.
+    pub use rdma_sys::atomic_t;
+
+    /// Memory region access flags.
+    pub use rdma_sys::ibv_access_flags;
+
+    /// Global address handle.
+    pub use rdma_sys::ibv_ah;
+
+    /// Attributes (used in creation of address handles).
+    pub use rdma_sys::ibv_ah_attr;
+
+    /// Device context.
+    pub use rdma_sys::ibv_context;
+
+    /// Completion queue.
+    pub use rdma_sys::ibv_cq;
+
+    /// Physical device information.
+    pub use rdma_sys::ibv_device;
+
+    /// Physical device attributes.
+    pub use rdma_sys::ibv_device_attr;
+
+    /// GID.
+    pub use rdma_sys::ibv_gid;
+
+    /// Global routing information (used in creation of address handles).
+    pub use rdma_sys::ibv_global_route;
+
+    /// Memory region.
+    pub use rdma_sys::ibv_mr;
+
+    /// Protection domain.
+    pub use rdma_sys::ibv_pd;
+
+    /// Device port attributes.
+    pub use rdma_sys::ibv_port_attr;
+
+    /// Queue pair.
+    pub use rdma_sys::ibv_qp;
+
+    /// Queue pair attributes.
+    pub use rdma_sys::ibv_qp_attr;
+
+    /// Queue pair capabilities (used in creation of queue pairs).
+    pub use rdma_sys::ibv_qp_cap;
+
+    /// Queue pair initialization attributes (used in creation of queue pairs).
+    pub use rdma_sys::ibv_qp_init_attr;
+
+    /// Receive work request.
+    pub use rdma_sys::ibv_recv_wr;
+
+    /// Send work request flags.
+    pub use rdma_sys::ibv_send_flags;
+
+    /// Send work request.
+    pub use rdma_sys::ibv_send_wr;
+
+    /// Scatter-gather element.
+    pub use rdma_sys::ibv_sge;
+
+    /// Work completion entry.
+    pub use rdma_sys::ibv_wc;
+
+    /// Work completion entry flags.
+    pub use rdma_sys::ibv_wc_flags;
+
+    /// Immediate data union (used in send work requests).
+    pub use rdma_sys::imm_data_invalidated_rkey_union_t;
+
+    /// RDMA one-sided read/write work request parameters.
+    pub use rdma_sys::rdma_t;
+
+    /// RDMA UD QP send work request parameters.
+    pub use rdma_sys::ud_t;
+
+    /// Union type of [`rdma_t`], [`atomic_t`], and [`ud_t`].
+    /// Specifies work request information.
+    pub use rdma_sys::wr_t;
+
+    /// Enum type of path active MTUs.
+    pub use rdma_sys::ibv_mtu;
+
+    /// Enum type of device port speeds.
+    pub use rdma_sys::ibv_port_state;
+
+    /// Mask of queue pair attributes (used in query of queue pair attributes).
+    pub use rdma_sys::ibv_qp_attr_mask;
+
+    /// Enum type of queue pair states.
+    pub use rdma_sys::ibv_qp_state;
+
+    /// Enum type of queue pair types.
+    pub use rdma_sys::ibv_qp_type;
+
+    /// Enum type of work request opcodes in completion entries.
+    pub use rdma_sys::ibv_wc_opcode;
+
+    /// Enum type of work completion statuses.
+    pub use rdma_sys::ibv_wc_status;
+
+    /// Enum type of work request opcodes.
+    pub use rdma_sys::ibv_wr_opcode;
+
+    pub use rdma_sys::{
+        ___ibv_query_port, ibv_alloc_pd, ibv_close_device, ibv_create_ah, ibv_create_cq,
+        ibv_create_qp, ibv_dealloc_pd, ibv_dereg_mr, ibv_destroy_ah, ibv_destroy_cq,
+        ibv_destroy_qp, ibv_free_device_list, ibv_get_device_list, ibv_get_device_name,
+        ibv_modify_qp, ibv_open_device, ibv_poll_cq, ibv_post_recv, ibv_post_send,
+        ibv_query_device, ibv_query_gid, ibv_reg_mr,
+    };
+
+    /// All types, modules, and functions in [`rdma_sys`].
+    pub mod entire {
+        pub use rdma_sys::*;
+    }
+}

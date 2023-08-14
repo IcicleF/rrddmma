@@ -6,8 +6,8 @@ use super::context::Context;
 use super::mr::Mr;
 use super::qp::{Qp, QpInitAttr};
 
+use crate::sys::*;
 use anyhow::{Context as _, Result};
-use rdma_sys::*;
 
 #[allow(dead_code)]
 #[derive(Debug)]

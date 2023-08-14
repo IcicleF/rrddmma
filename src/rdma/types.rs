@@ -1,5 +1,3 @@
-//! Type aliases and re-exports for RDMA-related operations.
-
 /// Port number is a [`u8`] that identifies a port on a local switch or an HCA.
 pub type PortNum = u8;
 
@@ -26,8 +24,3 @@ pub type WrId = u64;
 
 /// Immediate data (ImmData) is a [`u32`] that can be carried in RDMA send-type work requests.
 pub type ImmData = u32;
-
-/// Re-export of [`rdma_sys`] types.
-pub mod sys {
-    pub use rdma_sys::*;
-}

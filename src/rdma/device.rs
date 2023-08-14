@@ -1,8 +1,8 @@
 use std::ptr::NonNull;
 use std::{ffi, fmt, io, ops};
 
+use crate::sys::*;
 use anyhow::Result;
-use rdma_sys::*;
 
 /// An RDMA device.
 #[repr(transparent)]

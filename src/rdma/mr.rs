@@ -10,8 +10,8 @@ use std::{fmt, io, mem};
 use super::pd::Pd;
 use super::remote_mem::RemoteMem;
 
+use crate::sys::*;
 use anyhow::Result;
-use rdma_sys::*;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -35,12 +35,14 @@ impl Drop for MrInner<'_> {
 
 /// Local memory region.
 ///
-/// This type is a simple wrapper of an `Arc` and is guaranteed to have the
+/// This type is a simple wrapper of an [`Arc`] and is guaranteed to have the
 /// same memory layout with it.
 ///
 /// A memory region is a virtual memory space registered to the RDMA device.
 /// The registered memory itself does not belong to this type, but it must
 /// outlive this type's lifetime (`'mem`) or there can be dangling pointers.
+///
+/// **Subtyping:** [`Mr<'mem>`] is *covariant* over `'mem`.
 #[derive(Clone)]
 #[repr(transparent)]
 pub struct Mr<'mem> {
@@ -257,6 +259,8 @@ where
 ///
 /// A slice corresponds to an RDMA scatter-gather list entry, which can be used
 /// in RDMA data-plane verbs.
+///
+/// **Subtyping:** [`MrSlice<'a>`] is *covariant* over `'a`.
 #[derive(Debug, Clone)]
 pub struct MrSlice<'a> {
     mr: &'a Mr<'a>,

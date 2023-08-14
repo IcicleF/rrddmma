@@ -3,7 +3,7 @@ use std::ptr;
 use super::QpType;
 use crate::rdma::cq::Cq;
 
-use rdma_sys::*;
+use crate::sys::*;
 
 /// Queue pair capability attributes.
 ///

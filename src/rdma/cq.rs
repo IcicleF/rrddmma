@@ -5,8 +5,8 @@ use std::{fmt, io, ptr};
 
 use super::context::Context;
 
+use crate::sys::*;
 use anyhow::Result;
-use rdma_sys::*;
 use thiserror::Error;
 
 /// Opcode of a completion queue entry.
@@ -557,7 +557,7 @@ impl Cq {
     /// Blockingly wait until a work completion occurs and consume that
     /// work request.
     ///
-    /// ### Panics
+    /// ## Panics
     ///
     /// Panics if the work completion status is not success.
     pub fn poll_one_blocking_consumed(&self) {

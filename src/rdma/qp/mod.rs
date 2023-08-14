@@ -11,9 +11,9 @@ use crate::rdma::types::*;
 use crate::rdma::wr::*;
 use crate::utils::{interop::*, select::*};
 
+use crate::sys::*;
 use anyhow::{Context as _, Result};
 use libc;
-use rdma_sys::*;
 
 mod attr;
 pub use attr::{QpCaps, QpInitAttr};
@@ -384,7 +384,7 @@ impl Qp {
     /// Post a list of raw receive work requests.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     ///
-    /// ### Safety
+    /// ## Safety
     ///
     /// - Every work request must refer to valid memory address.
     /// - `head` must lead a valid chain of work requests of valid length.
@@ -731,10 +731,10 @@ impl Qp {
     /// Post a list of raw send work requests.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     ///
-    /// ### Safety
+    /// ## Safety
     ///
     /// - Every work request must refer to valid memory address.
-    /// - `wr_head` must lead a valid chain of work requests of valid length.
+    /// - `head` must lead a valid chain of work requests of valid length.
     #[inline]
     pub unsafe fn post_raw_send(&self, head: &RawSendWr) -> Result<()> {
         let ret = unsafe {

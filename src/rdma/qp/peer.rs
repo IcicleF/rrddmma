@@ -8,8 +8,8 @@ use crate::rdma::pd::Pd;
 use crate::rdma::qp::Qp;
 use crate::rdma::types::*;
 
+use crate::sys::*;
 use anyhow::{Context as _, Result};
-use rdma_sys::*;
 
 /// Endpoint (NIC port & queue pair) data.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]

@@ -22,16 +22,20 @@ fn is_my_ip(ip: &Ipv4Addr) -> bool {
 #[derive(Debug, Clone)]
 pub struct Cluster {
     peers: Vec<Ipv4Addr>,
-    id: usize,
+    id: isize,
 }
 
 impl Cluster {
-    pub fn new_withid(peers: Vec<Ipv4Addr>, id: usize) -> Self {
+    pub fn new_withid(peers: Vec<Ipv4Addr>, id: isize) -> Self {
         Cluster { peers, id }
     }
 
     pub fn new(peers: Vec<Ipv4Addr>) -> Self {
-        let id = peers.iter().position(|x| is_my_ip(x)).unwrap();
+        let id = peers
+            .iter()
+            .position(|x| is_my_ip(x))
+            .map(|x| x as isize)
+            .unwrap_or(-1);
         Self::new_withid(peers, id)
     }
 
@@ -147,7 +151,7 @@ impl Cluster {
     /// Get the rank of this node in the cluster.
     #[inline]
     pub fn rank(&self) -> usize {
-        self.id
+        self.id as usize
     }
 
     /// Get the number of participants in the cluster.

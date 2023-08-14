@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::{fmt, mem, ptr};
 
-use rdma_sys::*;
+use crate::sys::*;
 
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
@@ -22,7 +22,7 @@ struct IbvSgeDebuggable {
 impl fmt::Debug for IbvSgeDebuggable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!(
-            "Sge[{:p}, {:p})",
+            "Sge [{:p}, {:p})",
             self.addr as *const u8,
             (self.addr + self.length as u64) as *const u8
         ))
@@ -262,7 +262,7 @@ impl<'a> SendWr<'a> {
     }
 }
 
-/// Raw send work request.
+/// Raw send work request that owns a WR and its SGEs.
 ///
 /// This type is useful when you really want to avoid any memory copy overheads
 /// (aside from those in the driver) when posting a send work request.
@@ -344,8 +344,7 @@ impl<'a> RecvWr<'a> {
     }
 }
 
-/// Raw receive work request.
-/// Equivalent to a wrapper of [`rdma_sys::ibv_recv_wr`].
+/// Raw receive work request that owns a WR and its SGEs.
 ///
 /// This type is useful when you really want to avoid any memory copy overheads
 /// (aside from those in the driver) when posting a receive work request.

@@ -8,8 +8,8 @@ use super::gid::Gid;
 use super::pd::Pd;
 use crate::utils::interop::*;
 
+use crate::sys::*;
 use anyhow::{Context as _, Result};
-use rdma_sys::*;
 
 #[allow(dead_code)]
 struct ContextInner {
