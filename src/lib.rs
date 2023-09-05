@@ -36,43 +36,14 @@ mod utils;
 /// Not to be publicly exposed, instead `pub use` necessary items.
 mod rdma;
 
-#[cfg(not(feature = "full_name"))]
-mod rdma_export {
-    pub use super::rdma::context::Context;
-    pub use super::rdma::cq::{Cq, Wc, WcOpcode, WcStatus};
-    pub use super::rdma::gid::Gid;
-    pub use super::rdma::mr::{Mr, MrSlice};
-    pub use super::rdma::pd::Pd;
-    pub use super::rdma::qp::{Qp, QpCaps, QpEndpoint, QpInitAttr, QpPeer, QpState, QpType};
-    pub use super::rdma::remote_mem::RemoteMem;
-    pub use super::rdma::wr::{RawRecvWr, RawSendWr, RecvWr, SendWr, SendWrDetails};
-}
-
-#[cfg(feature = "full_name")]
-mod rdma_export {
-    pub use super::rdma::context::Context;
-    pub use super::rdma::cq::{
-        Cq as CompletionQueue, Wc as WorkCompletion, WcOpcode as WorkCompletionOpcode,
-        WcStatus as WorkCompletionStatus,
-    };
-    pub use super::rdma::gid::Gid;
-    pub use super::rdma::mr::{Mr as MemoryRegion, MrSlice as MemoryRegionSlice};
-    pub use super::rdma::pd::Pd as ProtectionDomain;
-    pub use super::rdma::qp::{
-        Qp as QueuePair, QpCaps as QueuePairCapabilities, QpEndpoint as QueuePairEndpoint,
-        QpInitAttr as QueuePairInitAttributes, QpPeer as QueuePairPeer, QpState as QueuePairState,
-        QpType as QueuePairType,
-    };
-    pub use super::rdma::remote_mem::RemoteMem as RemoteMemory;
-    pub use super::rdma::wr::{
-        RawRecvWr as RawReceiveWorkRequest, RawSendWr as RawSendWorkRequest,
-        RecvWr as ReceiveWorkRequest, SendWr as SendWorkRequest,
-        SendWrDetails as SendWorkRequestDetails,
-    };
-}
-
-/// Export RDMA data-plane functionalities to the top-level.
-pub use rdma_export::*;
+pub use rdma::context::Context;
+pub use rdma::cq::{Cq, Wc, WcOpcode, WcStatus};
+pub use rdma::gid::Gid;
+pub use rdma::mr::{Mr, MrSlice};
+pub use rdma::pd::Pd;
+pub use rdma::qp::{Qp, QpCaps, QpEndpoint, QpInitAttr, QpPeer, QpState, QpType};
+pub use rdma::remote_mem::RemoteMem;
+pub use rdma::wr::{RawRecvWr, RawSendWr, RecvWr, SendWr, SendWrDetails};
 
 /// Type aliases and re-exports for RDMA-related operations.
 pub use rdma::types;
@@ -87,7 +58,7 @@ pub mod wrap;
 /// If you seek to use the raw RDMA C API, you may want to use this module.
 ///
 /// In the root of this module, only those used in the library are re-exported.
-/// You can find the full list of re-exports in the [`entire`] submodule.
+/// You can find the full list of re-exports in the [`sys::entire`] submodule.
 pub mod sys {
     /// RDMA atomics work request parameters.
     pub use rdma_sys::atomic_t;
@@ -195,13 +166,71 @@ pub mod sys {
     /// Enum type of work request opcodes.
     pub use rdma_sys::ibv_wr_opcode;
 
-    pub use rdma_sys::{
-        ___ibv_query_port, ibv_alloc_pd, ibv_close_device, ibv_create_ah, ibv_create_cq,
-        ibv_create_qp, ibv_dealloc_pd, ibv_dereg_mr, ibv_destroy_ah, ibv_destroy_cq,
-        ibv_destroy_qp, ibv_free_device_list, ibv_get_device_list, ibv_get_device_name,
-        ibv_modify_qp, ibv_open_device, ibv_poll_cq, ibv_post_recv, ibv_post_send,
-        ibv_query_device, ibv_query_gid, ibv_reg_mr,
-    };
+    /// Free device list.
+    pub use rdma_sys::ibv_free_device_list;
+
+    /// Get device list.
+    pub use rdma_sys::ibv_get_device_list;
+
+    /// Get device name.
+    pub use rdma_sys::ibv_get_device_name;
+
+    /// Open device context.
+    pub use rdma_sys::ibv_open_device;
+
+    /// Close device context.
+    pub use rdma_sys::ibv_close_device;
+
+    /// Query device port attributes.
+    pub use rdma_sys::___ibv_query_port;
+
+    /// Query device attributes.
+    pub use rdma_sys::ibv_query_device;
+
+    /// Query GID.
+    pub use rdma_sys::ibv_query_gid;
+
+    /// Allocate protection domain.
+    pub use rdma_sys::ibv_alloc_pd;
+
+    /// Deallocate protection domain.
+    pub use rdma_sys::ibv_dealloc_pd;
+
+    /// Create address handle.
+    pub use rdma_sys::ibv_create_ah;
+
+    /// Destroy address handle.
+    pub use rdma_sys::ibv_destroy_ah;
+
+    /// Create completion queue.
+    pub use rdma_sys::ibv_create_cq;
+
+    /// Destroy completion queue.
+    pub use rdma_sys::ibv_destroy_cq;
+
+    /// Register memory region.
+    pub use rdma_sys::ibv_reg_mr;
+
+    /// Deregister memory region.
+    pub use rdma_sys::ibv_dereg_mr;
+
+    /// Create queue pair.
+    pub use rdma_sys::ibv_create_qp;
+
+    /// Destroy queue pair.
+    pub use rdma_sys::ibv_destroy_qp;
+
+    /// Modify queue pair.
+    pub use rdma_sys::ibv_modify_qp;
+
+    /// Post receive work request.
+    pub use rdma_sys::ibv_post_recv;
+
+    /// Post send work request.
+    pub use rdma_sys::ibv_post_send;
+
+    /// Poll completion queue.
+    pub use rdma_sys::ibv_poll_cq;
 
     /// All types, modules, and functions in [`rdma_sys`].
     pub mod entire {
