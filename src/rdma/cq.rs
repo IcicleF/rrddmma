@@ -276,7 +276,7 @@ impl Wc {
     pub fn imm(&self) -> Option<u32> {
         if (self.0.wc_flags & ibv_wc_flags::IBV_WC_WITH_IMM.0) != 0 {
             // SAFETY: read to a union that contains only `u32` fields is safe.
-            Some(unsafe { self.0.imm_data_invalidated_rkey_union.imm_data as u32 })
+            Some(unsafe { self.0.imm_data_invalidated_rkey_union.imm_data })
         } else {
             None
         }
@@ -284,9 +284,18 @@ impl Wc {
 
     /// Get the immediate data, without checking whether the work completion
     /// really carries an immediate.
+    ///
+    /// # Safety
+    ///
+    /// - The work completion must carry an immediate.
+    ///
+    /// In fact, reading the immediate data of a work completion that does not
+    /// carry an immediate can never do any harm. The `unsafe` signature of this
+    /// method is only to remind the caller that the work completion might not
+    /// carry an immediate.
     #[inline]
     pub unsafe fn imm_unchecked(&self) -> u32 {
-        self.0.imm_data_invalidated_rkey_union.imm_data as u32
+        self.0.imm_data_invalidated_rkey_union.imm_data
     }
 }
 
@@ -420,14 +429,6 @@ impl Cq {
     #[inline]
     pub fn poll_some(&self, num: u32) -> Result<Vec<Wc>> {
         let mut wc = <Vec<Wc>>::with_capacity(num as usize);
-        // SAFETY: extending the vector to a pre-allocated length.
-        // Temporarily, they will contain uninitialized values. At the time of
-        // the `truncate` call, the vector will be shrunk to the actual number
-        // of polled work completions, and the uninitialized values will be
-        // dropped.
-        unsafe {
-            wc.set_len(num as usize);
-        }
 
         // SAFETY: FFI, and that `Wc` is transparent over `ibv_wc`.
         let num = unsafe {
@@ -438,7 +439,7 @@ impl Cq {
             )
         };
         if num >= 0 {
-            wc.truncate(num as usize);
+            unsafe { wc.set_len(num as usize) };
             Ok(wc)
         } else {
             Err(anyhow::anyhow!(io::Error::from_raw_os_error(num)))
@@ -522,20 +523,17 @@ impl Cq {
     ///
     /// It is the caller's responsibility to check the status codes of the
     /// returned work completion entries.
+    #[inline]
+    #[allow(clippy::uninit_vec)]
     pub fn poll_blocking(&self, num: u32) -> Result<Vec<Wc>> {
         let mut wc = <Vec<Wc>>::with_capacity(num as usize);
-        // SAFETY: extending the vector to a pre-allocated length.
-        // Temporarily, they will contain uninitialized values. At the time of
-        // return, they will all be replaced by valid work completions.
-        unsafe {
-            wc.set_len(num as usize);
-        }
 
         let mut polled = 0;
         while polled < (num as usize) {
             let n = self.poll_into(&mut wc[polled..])?;
             polled += n as usize;
         }
+        unsafe { wc.set_len(num as usize) };
         Ok(wc)
     }
 

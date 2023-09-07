@@ -62,9 +62,19 @@ impl RemoteMem {
     }
 
     /// Get a remote memory region slice from a pointer inside the remote memory
-    /// area and a specified length. The behavior is undefined if the pointer
-    /// is not contained within the remote MR or the specified slice
-    /// `(ptr..(ptr + len))` is out of bounds.
+    /// area and a specified length.
+    ///
+    /// # Safety
+    ///
+    /// - The specified slice `(ptr..(ptr + len))` must be within the bounds of
+    ///   the remote memory slice.
+    ///
+    /// In fact, out-of-bound ranges of remote memory can do no harm to the local
+    /// machine, and RDMA requests containing such ranges will be rejected by the
+    /// remote RDMA NIC. The `unsafe` signature of this method is only to remind
+    /// the caller that if the specified range is out of bound and an RDMA request
+    /// unfortunately uses it, then the request will fail and the QP will get into
+    /// error state.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, ptr: u64, len: usize) -> Self {
         let offset = (ptr - self.addr) as usize;
@@ -72,8 +82,18 @@ impl RemoteMem {
     }
 
     /// Get a remote memory region slice that represents the specified range of
-    /// the remote memory area. The behavior is undefined if the range is out of
-    /// bounds.
+    /// the remote memory area.
+    ///
+    /// # Safety
+    ///
+    /// - The specified range must be within the bounds of the remote memory slice.
+    ///
+    /// In fact, out-of-bound ranges of remote memory can do no harm to the local
+    /// machine, and RDMA requests containing such ranges will be rejected by the
+    /// remote RDMA NIC. The `unsafe` signature of this method is only to remind
+    /// the caller that if the specified range is out of bound and an RDMA request
+    /// unfortunately uses it, then the request will fail and the QP will get into
+    /// error state.
     #[inline]
     pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> Self {
         let start = match r.start_bound() {

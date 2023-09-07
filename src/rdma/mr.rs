@@ -88,7 +88,9 @@ impl<'mem> Mr<'mem> {
     /// extra lifetime provider is required to get the lifetime parameter
     /// for the created memory region instance.
     ///
-    /// The caller must ensure that the memory area `[addr..(addr + len))`
+    /// # Safety
+    ///
+    /// - The caller must ensure that the memory area `[addr..(addr + len))`
     /// outlives the lifetime provided by the `_marker`.
     pub unsafe fn reg_with_ref<Marker>(
         pd: Pd,
@@ -144,6 +146,7 @@ impl<'mem> Mr<'mem> {
 
     /// Get the length of the registered memory area.
     #[inline]
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         // SAFETY: the pointer is valid as long as the `Mr` is alive.
         unsafe { (*self.inner.mr.as_ptr()).length }
@@ -197,9 +200,12 @@ impl<'mem> Mr<'mem> {
     }
 
     /// Get a memory region slice from a pointer inside the memory area
-    /// and a specified length. The behavior is undefined if the pointer
-    /// is not contained within the MR or the specified slice
-    /// `(ptr..(ptr + len))` is out of bounds.
+    /// and a specified length.
+    ///
+    /// # Safety
+    ///
+    /// - The specified slice `(ptr..(ptr + len))` must be within the bounds of
+    ///   the MR.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, pointer: *const u8, len: usize) -> MrSlice {
         let offset = pointer as usize - self.addr() as usize;
@@ -207,8 +213,11 @@ impl<'mem> Mr<'mem> {
     }
 
     /// Get a memory region slice that represents the specified range of
-    /// the memory area. The behavior is undefined if the range is out of
-    /// bounds.
+    /// the memory area.
+    ///
+    /// # Safety
+    ///
+    /// - The specified range must be within the bounds of the MR.
     #[inline]
     pub unsafe fn get_slice_unchecked<R>(&self, r: R) -> MrSlice
     where
@@ -269,6 +278,15 @@ pub struct MrSlice<'a> {
 
 impl<'a> MrSlice<'a> {
     /// Create a new memory region slice of the given MR and range.
+    ///
+    /// # Safety
+    ///
+    /// This method is not intended to be used by users. Instead, you should
+    /// get slices from [`Mr`] interfaces. In case you really need to directly
+    /// construct a slice, you need to ensure the validity of the specified
+    /// range, i.e.,
+    ///
+    /// - The specified range must be within the bounds of the MR.
     pub unsafe fn new(mr: &'a Mr<'a>, range: Range<usize>) -> Self {
         Self { mr, range }
     }
@@ -286,6 +304,7 @@ impl<'a> MrSlice<'a> {
 
     /// Get the length of the slice.
     #[inline]
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.range.end - self.range.start
     }
@@ -293,7 +312,7 @@ impl<'a> MrSlice<'a> {
     /// Get the underlying `Mr`.
     #[inline]
     pub fn mr(&self) -> &Mr<'a> {
-        &self.mr
+        self.mr
     }
 
     /// Sub-slice this slice. Return `None` if the range is out of bounds.
@@ -324,9 +343,12 @@ impl<'a> MrSlice<'a> {
     }
 
     /// Get a memory region slice from a pointer inside the represented memory
-    /// area slice and a specified length. The behavior is undefined if the
-    /// pointer is not contained within this slice or `(ptr..(ptr + len))`
-    /// is out of bounds with regard to this slice.
+    /// area slice and a specified length.
+    ///
+    /// # Safety
+    ///
+    /// - The specified sub-slice `(ptr..(ptr + len))` must be within the bounds of
+    ///   the slice.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, pointer: *const u8, len: usize) -> MrSlice<'a> {
         let offset = pointer as usize - self.addr() as usize;
@@ -334,8 +356,11 @@ impl<'a> MrSlice<'a> {
     }
 
     /// Get a memory region slice that represents the specified range of the
-    /// the memory area within this memory slice. The behavior is undefined
-    /// if the range is out of bounds.
+    /// the memory area within this memory slice.
+    ///
+    /// # Safety
+    ///
+    /// - The specified range must be within the bounds of the slice.
     #[inline]
     pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice<'a> {
         let start = match r.start_bound() {

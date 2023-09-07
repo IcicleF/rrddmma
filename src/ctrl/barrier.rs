@@ -29,7 +29,7 @@ impl Barrier {
 
             let buf = [0; 1];
             for mut stream in streams {
-                stream.write(&buf).unwrap();
+                stream.write_all(&buf).unwrap();
             }
         } else {
             let server_addr = SocketAddrV4::new(cluster.peers()[0], port);

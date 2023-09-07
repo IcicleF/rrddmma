@@ -25,7 +25,7 @@ impl QpEndpoint {
     pub fn new(qp: &Qp) -> Self {
         let ctx = qp.context();
         QpEndpoint {
-            gid: ctx.gid().into(),
+            gid: ctx.gid(),
             port_num: ctx.port_num(),
             lid: ctx.lid(),
             qpn: qp.qp_num(),
@@ -33,8 +33,8 @@ impl QpEndpoint {
     }
 
     /// Create a dummy endpoint.
-    /// This is useful when you want to modify a UD QP to RTS.
-    pub unsafe fn dummy() -> Self {
+    /// This is useful when modifying a UD QP to RTS.
+    pub(crate) unsafe fn dummy() -> Self {
         mem::zeroed()
     }
 }

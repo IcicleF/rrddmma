@@ -143,7 +143,7 @@ impl Context {
     /// Get the specified GID of the opened device.
     #[inline]
     pub fn gid(&self) -> Gid {
-        self.inner.gid.clone()
+        self.inner.gid
     }
 
     /// Get the GID index passed by the user when opening this context.

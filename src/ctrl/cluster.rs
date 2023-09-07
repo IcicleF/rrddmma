@@ -2,14 +2,8 @@ use std::io::prelude::*;
 use std::net::*;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use local_ip_address::list_afinet_netifas;
-
-use super::{barrier::Barrier, connecter::Connecter};
-use crate::{
-    rdma::{cq::Cq, pd::Pd, qp::*},
-    RemoteMem,
-};
 
 fn is_my_ip(ip: &Ipv4Addr) -> bool {
     let my_ips = list_afinet_netifas().unwrap();
@@ -33,7 +27,7 @@ impl Cluster {
     pub fn new(peers: Vec<Ipv4Addr>) -> Self {
         let id = peers
             .iter()
-            .position(|x| is_my_ip(x))
+            .position(is_my_ip)
             .map(|x| x as isize)
             .unwrap_or(-1);
         Self::new_withid(peers, id)
@@ -166,6 +160,7 @@ impl Cluster {
         self.peers.get(id).cloned()
     }
 
+    #[cfg(feature = "never")]
     /// Create full (all-to-all) connection among the nodes in the cluster.
     /// The parameter `num_links` specifies the number of parallel connections
     /// to establish between each pair of nodes.
@@ -279,6 +274,7 @@ impl Cluster {
         Ok(connections)
     }
 
+    #[cfg(feature = "never")]
     /// Exchange memory region information with all other nodes in the cluster.
     ///
     /// The argument `mr_provider` takes the peer node ID and returns a
@@ -328,6 +324,7 @@ impl Cluster {
         Ok(rmrs)
     }
 
+    #[cfg(feature = "never")]
     /// Create client-server RC connection among the nodes in the cluster.
     ///
     /// This method will create a logical client and a logical server on each
@@ -439,20 +436,5 @@ impl Cluster {
             Barrier::wait(self);
         }
         Ok((clients, servers))
-    }
-}
-
-/// Provide a helper trait to remove the [`QpPeer`]s from the return value of
-/// [`Cluster::connect_fc`].
-pub trait DiscardPeers {
-    /// Remove [`QpPeer`]s from the return value of [`Cluster::connect_fc`].
-    fn discard_peers(self) -> Vec<Option<Vec<Qp>>>;
-}
-
-impl DiscardPeers for Vec<Option<Vec<(Qp, Option<QpPeer>)>>> {
-    fn discard_peers(self) -> Vec<Option<Vec<Qp>>> {
-        self.into_iter()
-            .map(|x| x.map(|y| y.into_iter().map(|(qp, _)| qp).collect()))
-            .collect()
     }
 }

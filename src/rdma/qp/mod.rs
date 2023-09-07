@@ -238,9 +238,9 @@ impl Qp {
                 | ibv_access_flags::IBV_ACCESS_REMOTE_READ
                 | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
                 .0;
-            attr_mask = attr_mask | ibv_qp_attr_mask::IBV_QP_ACCESS_FLAGS;
+            attr_mask |= ibv_qp_attr_mask::IBV_QP_ACCESS_FLAGS;
         } else {
-            attr_mask = attr_mask | ibv_qp_attr_mask::IBV_QP_QKEY;
+            attr_mask |= ibv_qp_attr_mask::IBV_QP_QKEY;
             attr.qkey = Self::GLOBAL_QKEY;
         }
 
@@ -273,8 +273,7 @@ impl Qp {
             attr.ah_attr.port_num = ctx.port_num();
             attr.ah_attr.is_global = 1;
 
-            attr_mask = attr_mask
-                | ibv_qp_attr_mask::IBV_QP_AV
+            attr_mask |= ibv_qp_attr_mask::IBV_QP_AV
                 | ibv_qp_attr_mask::IBV_QP_PATH_MTU
                 | ibv_qp_attr_mask::IBV_QP_DEST_QPN
                 | ibv_qp_attr_mask::IBV_QP_RQ_PSN
@@ -344,7 +343,7 @@ impl Qp {
         let mut wr = ibv_recv_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: if local.len() == 0 {
+            sg_list: if local.is_empty() {
                 ptr::null_mut()
             } else {
                 sgl.as_mut_ptr()
@@ -362,7 +361,7 @@ impl Qp {
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
     pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
-        if ops.len() == 0 {
+        if ops.is_empty() {
             return Ok(());
         }
 
@@ -384,7 +383,7 @@ impl Qp {
     /// Post a list of raw receive work requests.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     ///
-    /// ## Safety
+    /// # Safety
     ///
     /// - Every work request must refer to valid memory address.
     /// - `head` must lead a valid chain of work requests of valid length.
@@ -440,7 +439,7 @@ impl Qp {
         wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: if local.len() == 0 {
+            sg_list: if local.is_empty() {
                 ptr::null_mut()
             } else {
                 sgl.as_mut_ptr()
@@ -493,7 +492,7 @@ impl Qp {
         wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: if local.len() == 0 {
+            sg_list: if local.is_empty() {
                 ptr::null_mut()
             } else {
                 sgl.as_mut_ptr()
@@ -538,7 +537,7 @@ impl Qp {
         wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
-            sg_list: if local.len() == 0 {
+            sg_list: if local.is_empty() {
                 ptr::null_mut()
             } else {
                 sgl.as_mut_ptr()
@@ -693,7 +692,7 @@ impl Qp {
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
     pub fn post_send(&self, ops: &[SendWr<'_>]) -> Result<()> {
-        if ops.len() == 0 {
+        if ops.is_empty() {
             return Ok(());
         }
 
@@ -719,8 +718,7 @@ impl Qp {
             let failed = wrs
                 .iter()
                 .enumerate()
-                .filter(|(_, wr)| (*wr) as *const _ == bad_wr)
-                .next();
+                .find(|(_, wr)| (*wr) as *const _ == bad_wr);
             match failed {
                 Some((i, _)) => format!("failed at send work request #{}", i),
                 None => "failed at unknown send work request".to_string(),
@@ -731,7 +729,7 @@ impl Qp {
     /// Post a list of raw send work requests.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     ///
-    /// ## Safety
+    /// # Safety
     ///
     /// - Every work request must refer to valid memory address.
     /// - `head` must lead a valid chain of work requests of valid length.

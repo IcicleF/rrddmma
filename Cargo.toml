@@ -1,6 +1,6 @@
 [package]
 name = "rrddmma"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2021"
 
 authors = ["Jian Gao <i@icyf.me>"]

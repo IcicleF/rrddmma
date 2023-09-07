@@ -266,7 +266,7 @@ impl<'a> SendWr<'a> {
 ///
 /// This type is useful when you really want to avoid any memory copy overheads
 /// (aside from those in the driver) when posting a send work request.
-pub struct RawSendWr(pub(crate) Box<Vec<ibv_sge>>, pub(crate) ibv_send_wr);
+pub struct RawSendWr(pub(crate) Vec<ibv_sge>, pub(crate) ibv_send_wr);
 
 unsafe impl Send for RawSendWr {}
 unsafe impl Sync for RawSendWr {}
@@ -274,7 +274,7 @@ unsafe impl Sync for RawSendWr {}
 impl From<SendWr<'_>> for RawSendWr {
     fn from(wr: SendWr<'_>) -> Self {
         let raw_wr = wr.to_wr();
-        Self(Box::new(wr.0.local), raw_wr)
+        Self(wr.0.local, raw_wr)
     }
 }
 
@@ -286,12 +286,22 @@ impl RawSendWr {
 
     /// Set the raw scatter-gather list.
     pub fn set_sgl(&mut self, sgl: Vec<ibv_sge>) {
-        self.0 = Box::new(sgl);
+        self.0 = sgl;
         self.1.sg_list = self.0.as_ptr() as *mut _;
         self.1.num_sge = self.0.len() as i32;
     }
 
     /// Get the raw work request item for mutation.
+    ///
+    /// # Safety
+    ///
+    /// When mutating the raw work request, you must ensure that:
+    ///
+    /// - The `sg_list` field must point to a valid [`ibv_sge`] array.
+    /// - The `num_sge` field must be a valid length of the SGE array.
+    /// - The `next` field must be null or a valid pointer to another valid
+    ///   [`ibv_send_wr`] object that outlives `self`.
+    /// - Proper fields must be set according to the work request type.
     pub unsafe fn raw_wr(&mut self) -> &mut ibv_send_wr {
         &mut self.1
     }
@@ -348,7 +358,7 @@ impl<'a> RecvWr<'a> {
 ///
 /// This type is useful when you really want to avoid any memory copy overheads
 /// (aside from those in the driver) when posting a receive work request.
-pub struct RawRecvWr(pub(crate) Box<Vec<ibv_sge>>, pub(crate) ibv_recv_wr);
+pub struct RawRecvWr(pub(crate) Vec<ibv_sge>, pub(crate) ibv_recv_wr);
 
 unsafe impl Send for RawRecvWr {}
 unsafe impl Sync for RawRecvWr {}
@@ -361,12 +371,21 @@ impl RawRecvWr {
 
     /// Set the raw scatter-gather list.
     pub fn set_sgl(&mut self, sgl: Vec<ibv_sge>) {
-        self.0 = Box::new(sgl);
+        self.0 = sgl;
         self.1.sg_list = self.0.as_ptr() as *mut _;
         self.1.num_sge = self.0.len() as i32;
     }
 
     /// Get the raw work request item for mutation.
+    ///
+    /// # Safety
+    ///
+    /// When mutating the raw work request, you must ensure that:
+    ///
+    /// - The `sg_list` field must point to a valid [`ibv_sge`] array.
+    /// - The `num_sge` field must be a valid length of the SGE array.
+    /// - The `next` field must be null or a valid pointer to another valid
+    ///   [`ibv_recv_wr`] object that outlives `self`.
     pub unsafe fn raw_wr(&mut self) -> &mut ibv_recv_wr {
         &mut self.1
     }
@@ -375,6 +394,6 @@ impl RawRecvWr {
 impl From<RecvWr<'_>> for RawRecvWr {
     fn from(wr: RecvWr<'_>) -> Self {
         let raw_wr = wr.to_wr();
-        Self(Box::new(wr.0.local), raw_wr)
+        Self(wr.0.local, raw_wr)
     }
 }

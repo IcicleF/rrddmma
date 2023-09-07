@@ -28,21 +28,44 @@ pub struct RegisteredMem {
 impl RegisteredMem {
     /// Allocate memory with the given length and register MR on it.
     pub fn new(pd: Pd, len: usize) -> Result<Self> {
+        if len == 0 {
+            return Err(anyhow::anyhow!("zero-length memory regions are disallowed"));
+        }
+
         // This should use the global allocator
         let buf = vec![0u8; len].into_boxed_slice();
-        Self::new_owned(pd, buf)
+        Self::new_owned(pd, buf).map_err(|(_, e)| e)
     }
 
     /// Take ownership of the provided memory region and register MR on it.
-    pub fn new_owned(pd: Pd, buf: Box<[u8]>) -> Result<Self> {
-        let mr =
-            unsafe { Mr::reg_with_ref(pd, buf.as_ptr() as *mut _, buf.len(), &PhantomData::<()>)? };
+    /// On error, the provided buffer will be returned along with the error.
+    pub fn new_owned(
+        pd: Pd,
+        buf: Box<[u8]>,
+    ) -> std::result::Result<Self, (Box<[u8]>, anyhow::Error)> {
+        if buf.is_empty() {
+            return Err((
+                buf,
+                anyhow::anyhow!("zero-length memory regions are disallowed"),
+            ));
+        }
+
+        let mr = match unsafe {
+            Mr::reg_with_ref(pd, buf.as_ptr() as *mut _, buf.len(), &PhantomData::<()>)
+        } {
+            Ok(mr) => mr,
+            Err(e) => return Err((buf, e)),
+        };
         Ok(Self { mr, buf })
     }
 
     /// Allocate memory that shares the same length and content with the provided
     /// slice, and then register MR on it.
     pub fn new_with_content(pd: Pd, content: &[u8]) -> Result<Self> {
+        if content.is_empty() {
+            return Err(anyhow::anyhow!("zero-length memory regions are disallowed"));
+        }
+
         let mut ret = Self::new(pd, content.len())?;
         ret.buf.copy_from_slice(content);
         Ok(ret)
@@ -56,13 +79,14 @@ impl RegisteredMem {
 
     /// Get the length of the allocated memory.
     #[inline]
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.buf.len()
     }
 
     /// Get the underlying [`Mr`].
     #[inline]
-    pub fn mr<'a>(&'a self) -> &'a Mr<'a> {
+    pub fn mr(&self) -> &Mr {
         &self.mr
     }
 
@@ -87,17 +111,23 @@ impl RegisteredMem {
     }
 
     /// Get a memory region slice from a pointer inside the represented memory
-    /// area slice and a specified length. The behavior is undefined if the
-    /// pointer is not contained within this slice or `(ptr..(ptr + len))`
-    /// is out of bounds with regard to this slice.
+    /// area slice and a specified length.
+    ///
+    /// # Safety
+    ///
+    /// - The specified slice `(ptr..(ptr + len))` must be within the bounds of
+    ///   the MR.
     #[inline]
     pub unsafe fn get_slice_from_ptr(&self, pointer: *const u8, len: usize) -> MrSlice {
         self.mr.get_slice_from_ptr(pointer, len)
     }
 
     /// Get a memory region slice that represents the specified range of the
-    /// the memory area within this memory slice. The behavior is undefined
-    /// if the range is out of bounds.
+    /// the memory area within this memory slice.
+    ///
+    /// # Safety
+    ///
+    /// - The specified range must be within the bounds of the MR.
     #[inline]
     pub unsafe fn get_slice_unchecked(&self, r: impl RangeBounds<usize>) -> MrSlice {
         self.mr.get_slice_unchecked(r)

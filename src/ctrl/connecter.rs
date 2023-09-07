@@ -77,7 +77,7 @@ impl Connecter {
     /// Otherwise, this will be the client side and will connect to the remote.
     pub fn new_on_port(with: Option<Ipv4Addr>, port: u16) -> Result<Self> {
         let stream = if let Some(addr) = with.as_ref() {
-            let server_addr = SocketAddrV4::new(addr.clone(), port);
+            let server_addr = SocketAddrV4::new(*addr, port);
             connect_until_success(server_addr, Duration::from_millis(200))
                 .with_context(|| format!("failed to connect with {}", server_addr))?
         } else {
@@ -178,7 +178,7 @@ impl Connecter {
         if qp.qp_type() == QpType::Rc {
             Ok(None)
         } else {
-            QpPeer::new(qp.pd(), ep).map(|peer| Some(peer))
+            QpPeer::new(qp.pd(), ep).map(Some)
         }
     }
 

@@ -8,5 +8,5 @@ mod cluster;
 mod connecter;
 
 pub use barrier::Barrier;
-pub use cluster::{Cluster, DiscardPeers as DiscardPeersFromConnections};
+pub use cluster::Cluster;
 pub use connecter::Connecter;
