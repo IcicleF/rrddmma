@@ -12,10 +12,9 @@
 //! simplifies the system's design when it comes to multi-threading.
 //!
 //! Aside from RDMA functionalities, there are some TCP-based connection
-//! management utilities in the [`ctrl`] mod. Most commonly-used ones include
-//! distributed barriers ([`ctrl::Barrier`]) and connection builders
-//! ([`ctrl::Connecter`]). Some higher-level wrappings of RDMA resources are
-//! in the [`wrap`] mod and under continuous development.
+//! management utilities in the [`ctrl`] mod. Currently there is only a
+//! connection builder ([`ctrl::Connecter`]). Some higher-level wrappings
+//! of RDMA resources are in the [`wrap`] mod and under continuous development.
 //!
 //! **WARNING: The interfaces are unstable and up to change!**
 //!

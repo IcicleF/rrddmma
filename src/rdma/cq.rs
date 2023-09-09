@@ -524,7 +524,6 @@ impl Cq {
     /// It is the caller's responsibility to check the status codes of the
     /// returned work completion entries.
     #[inline]
-    #[allow(clippy::uninit_vec)]
     pub fn poll_blocking(&self, num: u32) -> Result<Vec<Wc>> {
         let mut wc = <Vec<Wc>>::with_capacity(num as usize);
 

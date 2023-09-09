@@ -2,7 +2,6 @@ use std::io::prelude::*;
 use std::net::*;
 use std::time::Duration;
 
-use super::cluster::Cluster;
 use crate::rdma::{qp::*, remote_mem::*};
 use anyhow::{Context as _, Result};
 
@@ -95,50 +94,6 @@ impl Connecter {
     /// Create a new `Connecter` that connects with the specified remote peer.
     pub fn new(with: Option<Ipv4Addr>) -> Result<Self> {
         Self::new_on_port(with, Self::DEFAULT_PORT)
-    }
-
-    /// Create a new `Connecter` that connects with the remote peer with the
-    /// given rank in the cluster, on the given TCP port.
-    ///
-    /// Who will be the client is determined by the ranks of the two sides of
-    /// the connection. The side with the smaller rank is the client.
-    /// Generally, you must ensure that the port is vacant on both sides.
-    pub fn within_cluster_on_port(cluster: &Cluster, with: usize, port: u16) -> Result<Self> {
-        if with >= cluster.size() {
-            return Err(anyhow::anyhow!(
-                "rank {} is out of bounds (size = {})",
-                with,
-                cluster.size()
-            ));
-        }
-
-        let id = cluster.rank();
-        assert_ne!(id, with);
-
-        let (with, stream) = if id < with {
-            let server_addr = SocketAddrV4::new(cluster.peers()[with], port);
-            let stream = connect_until_success(server_addr, Duration::from_millis(200))
-                .with_context(|| format!("failed to connect with {}", server_addr))?;
-            (Some(cluster.peers()[with]), stream)
-        } else {
-            let inaddr_any = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
-            let listener = TcpListener::bind(inaddr_any).with_context(|| "failed to listen")?;
-            (
-                None,
-                listener.accept().with_context(|| "failed to accept")?.0,
-            )
-        };
-
-        Ok(Connecter {
-            with,
-            stream: Some(stream),
-        })
-    }
-
-    /// Create a new `Connecter` that connects with the remote peer with the
-    /// given rank on the default TCP port 13337.
-    pub fn within_cluster(cluster: &Cluster, with: usize) -> Result<Self> {
-        Self::within_cluster_on_port(cluster, with, Self::DEFAULT_PORT)
     }
 
     /// Connect a QP with the remote peer.
