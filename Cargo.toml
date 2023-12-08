@@ -11,15 +11,18 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+memoffset = "0.9"
 anyhow = "1.0"
-rdma-sys = "0.3.0"
-
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.7.3"
-log = "0.4.17"
+toml = "0.8"
+log = "0.4"
 thiserror = "1.0"
 libc = "0.2"
 
 [dev-dependencies]
 futures = "0.3"
+
+[build-dependencies]
+pkg-config = "0.3"
+bindgen = "0.69"

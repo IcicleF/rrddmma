@@ -11,7 +11,7 @@ use crate::rdma::types::*;
 use crate::rdma::wr::*;
 use crate::utils::{interop::*, select::*};
 
-use crate::sys::*;
+use crate::bindings::*;
 use anyhow::{Context as _, Result};
 use libc;
 
@@ -237,7 +237,7 @@ impl Qp {
             attr.qp_access_flags = (ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
                 | ibv_access_flags::IBV_ACCESS_REMOTE_READ
                 | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
-                .0;
+                .0 as _;
             attr_mask |= ibv_qp_attr_mask::IBV_QP_ACCESS_FLAGS;
         } else {
             attr_mask |= ibv_qp_attr_mask::IBV_QP_QKEY;
@@ -421,6 +421,60 @@ impl Qp {
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the send
     /// by some means, for example by polling the send CQ.
+    #[cfg(mlnx4)]
+    pub fn send(
+        &self,
+        local: &[MrSlice],
+        peer: Option<&QpPeer>,
+        imm: Option<ImmData>,
+        wr_id: WrId,
+        signal: bool,
+        inline: bool,
+    ) -> Result<()> {
+        if !signal && self.inner.init_attr.sq_sig_all {
+            log::warn!("QP configured to signal all sends despite this send ask to not signal");
+        }
+
+        let mut sgl = build_sgl(local);
+        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
+        wr = ibv_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: if local.is_empty() {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
+            num_sge: local.len() as i32,
+            opcode: imm.is_none().select_val(
+                ibv_wr_opcode::IBV_WR_SEND,
+                ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
+            ),
+            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
+                | inline.select_val(ibv_send_flags::IBV_SEND_INLINE.0, 0),
+            imm_data: imm.unwrap_or(0),
+            ..wr
+        };
+        if let Some(peer) = peer {
+            wr.wr.ud = peer.ud();
+        }
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+
+    /// Post an RDMA send request.
+    ///
+    /// If `peer` is `None`, this QP is expected to be connected and the send
+    /// will go to the remote end of the connection. Otherwise, this QP is
+    /// expected to be UD and the send will go to the specified peer.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the send
+    /// by some means, for example by polling the send CQ.
+    #[cfg(mlnx5)]
     pub fn send(
         &self,
         local: &[MrSlice],
@@ -518,6 +572,57 @@ impl Qp {
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the write
     /// by some means, for example by polling the send CQ.
+    #[cfg(mlnx4)]
+    pub fn write(
+        &self,
+        local: &[MrSlice],
+        remote: &RemoteMem,
+        wr_id: WrId,
+        imm: Option<ImmData>,
+        signal: bool,
+    ) -> Result<()> {
+        if !signal && self.inner.init_attr.sq_sig_all {
+            log::warn!(
+                "QP configured to signal all sends despite this RDMA write ask to not signal"
+            );
+        }
+
+        let mut sgl = build_sgl(local);
+        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
+        wr = ibv_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: if local.is_empty() {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
+            num_sge: local.len() as i32,
+            opcode: imm.is_none().select_val(
+                ibv_wr_opcode::IBV_WR_RDMA_WRITE,
+                ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
+            ),
+            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            imm_data: imm.unwrap_or(0),
+            wr: wr_t {
+                rdma: remote.as_rdma_t(),
+            },
+            ..wr
+        };
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+
+    /// Post an RDMA write request.
+    /// Only valid for RC QPs.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the write
+    /// by some means, for example by polling the send CQ.
+    #[cfg(mlnx5)]
     pub fn write(
         &self,
         local: &[MrSlice],

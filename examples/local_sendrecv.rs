@@ -15,10 +15,9 @@ fn client(pd: Pd) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Create RDMA context using the first device found, on its first port and
-    // use the GID index 0. This is an appropriate setting on an Infiniband
-    // fabric. For RoCE, you may need to change the GID index.
-    let context = Context::open(None, 1, 0)?;
+    // Create RDMA context using the first active port found, use the GID index 3.
+    // This should be an appropriate configuration for both IB and RoCE.
+    let context = Context::open(None, 1, 3)?;
     let pd = Pd::new(context)?;
 
     let cli = {

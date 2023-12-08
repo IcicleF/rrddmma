@@ -8,7 +8,7 @@ use crate::rdma::pd::Pd;
 use crate::rdma::qp::Qp;
 use crate::rdma::types::*;
 
-use crate::sys::*;
+use crate::bindings::*;
 use anyhow::{Context as _, Result};
 
 /// Endpoint (NIC port & queue pair) data.

@@ -5,7 +5,7 @@ use std::{fmt, io, ptr};
 
 use super::context::Context;
 
-use crate::sys::*;
+use crate::bindings::*;
 use anyhow::Result;
 use thiserror::Error;
 
@@ -194,27 +194,39 @@ pub enum WcStatus {
     #[error("response timeout error")]
     RespTimeoutErr = ibv_wc_status::IBV_WC_RESP_TIMEOUT_ERR as _,
 
+    /// **General Error:** other error which isn't one of the above errors.
+    #[error("general error")]
+    GeneralErr = ibv_wc_status::IBV_WC_GENERAL_ERR as _,
+
     /// **Tag Matching Error:** a failure occurred when trying to issue an
     /// `ibv_post_srq_ops` with opcode `IBV_WR_TAG_DEL` to remove a previously
     /// added tag entry, due to concurrent tag consumption.
+    #[cfg(mlnx5)]
     #[error("tag matching error")]
     TmErr = ibv_wc_status::IBV_WC_TM_ERR as _,
 
     /// **Rendezvous Request Tagged Buffer Insufficient:** this is due to
     /// a posted tagged buffer is insufficient to hold the data of a
     /// rendezvous request.
+    #[cfg(mlnx5)]
     #[error("rendezvous request tagged buffer insufficient")]
     TmRndvIncomplete = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE as _,
-
-    /// **General Error:** other error which isn't one of the above errors.
-    #[error("general error")]
-    GeneralErr = ibv_wc_status::IBV_WC_GENERAL_ERR as _,
 }
 
 /// For better performance, the cast from `u32` to `WcStatus` is implemented as
 /// a direct `mem::transmute` for valid values from 0 to 23 instead of a verbose
 /// `match` statement for each possibility.
 impl From<u32> for WcStatus {
+    #[cfg(mlnx4)]
+    fn from(wc_status: u32) -> Self {
+        match wc_status {
+            // SAFETY: Valid status codes in [`ibv_wc_status`] are contiguous.
+            x if x <= ibv_wc_status::IBV_WC_GENERAL_ERR => unsafe { std::mem::transmute(x) },
+            x => panic!("invalid wc status: {}", x),
+        }
+    }
+
+    #[cfg(mlnx5)]
     fn from(wc_status: u32) -> Self {
         match wc_status {
             // SAFETY: Valid status codes in [`ibv_wc_status`] are contiguous.
@@ -229,7 +241,7 @@ impl From<u32> for WcStatus {
 /// This structure transparently wraps an `ibv_wc` structure, representing
 /// an entry polled from the completion queue.
 #[repr(transparent)]
-pub struct Wc(ibv_wc);
+pub struct Wc(pub ibv_wc);
 
 unsafe impl Send for Wc {}
 unsafe impl Sync for Wc {}
@@ -272,6 +284,18 @@ impl Wc {
     }
 
     /// Get the immediate data.
+    #[cfg(mlnx4)]
+    #[inline]
+    pub fn imm(&self) -> Option<u32> {
+        if (self.0.wc_flags & ibv_wc_flags::IBV_WC_WITH_IMM.0) != 0 {
+            Some(unsafe { self.0.imm_data })
+        } else {
+            None
+        }
+    }
+
+    /// Get the immediate data.
+    #[cfg(mlnx5)]
     #[inline]
     pub fn imm(&self) -> Option<u32> {
         if (self.0.wc_flags & ibv_wc_flags::IBV_WC_WITH_IMM.0) != 0 {
@@ -293,6 +317,24 @@ impl Wc {
     /// carry an immediate can never do any harm. The `unsafe` signature of this
     /// method is only to remind the caller that the work completion might not
     /// carry an immediate.
+    #[cfg(mlnx4)]
+    #[inline]
+    pub unsafe fn imm_unchecked(&self) -> u32 {
+        self.0.imm_data
+    }
+
+    /// Get the immediate data, without checking whether the work completion
+    /// really carries an immediate.
+    ///
+    /// # Safety
+    ///
+    /// - The work completion must carry an immediate.
+    ///
+    /// In fact, reading the immediate data of a work completion that does not
+    /// carry an immediate can never do any harm. The `unsafe` signature of this
+    /// method is only to remind the caller that the work completion might not
+    /// carry an immediate.
+    #[cfg(mlnx5)]
     #[inline]
     pub unsafe fn imm_unchecked(&self) -> u32 {
         self.0.imm_data_invalidated_rkey_union.imm_data
@@ -482,6 +524,10 @@ impl Cq {
     /// beyond the number of polled work completions is not guaranteed.
     #[inline]
     pub fn poll_into(&self, wc: &mut [Wc]) -> Result<u32> {
+        if wc.is_empty() {
+            return Ok(0);
+        }
+
         // SAFETY: FFI, and that `Wc` is transparent over `ibv_wc`.
         let num = unsafe {
             ibv_poll_cq(

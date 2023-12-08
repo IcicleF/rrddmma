@@ -3,7 +3,7 @@ use std::ptr;
 use super::QpType;
 use crate::rdma::cq::Cq;
 
-use crate::sys::*;
+use crate::bindings::*;
 
 /// Queue pair capability attributes.
 ///
@@ -154,6 +154,28 @@ impl QpInitAttr {
     }
 
     /// Translate the initialization attributes into [`ibv_qp_init_attr`].
+    #[cfg(mlnx4)]
+    pub(crate) fn to_actual_init_attr(&self) -> ibv_qp_init_attr {
+        ibv_qp_init_attr {
+            qp_context: ptr::null_mut(),
+            send_cq: self.send_cq.as_raw(),
+            recv_cq: self.recv_cq.as_raw(),
+            srq: ptr::null_mut(),
+            cap: ibv_qp_cap {
+                max_send_wr: self.cap.max_send_wr,
+                max_recv_wr: self.cap.max_recv_wr,
+                max_send_sge: self.cap.max_send_sge,
+                max_recv_sge: self.cap.max_recv_sge,
+                max_inline_data: self.cap.max_inline_data,
+            },
+            qp_type: u32::from(self.qp_type),
+            sq_sig_all: self.sq_sig_all as i32,
+            xrc_domain: ptr::null_mut(),
+        }
+    }
+
+    /// Translate the initialization attributes into [`ibv_qp_init_attr`].
+    #[cfg(mlnx5)]
     pub(crate) fn to_actual_init_attr(&self) -> ibv_qp_init_attr {
         ibv_qp_init_attr {
             qp_context: ptr::null_mut(),

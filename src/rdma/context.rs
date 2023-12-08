@@ -3,12 +3,12 @@ use std::sync::Arc;
 use std::{fmt, io, mem};
 
 use super::cq::Cq;
-use super::device::DeviceList;
+use super::device::*;
 use super::gid::Gid;
 use super::pd::Pd;
 use crate::utils::interop::*;
 
-use crate::sys::*;
+use crate::bindings::*;
 use anyhow::{Context as _, Result};
 
 #[allow(dead_code)]
@@ -58,48 +58,59 @@ pub struct Context {
 impl Context {
     /// Open a device and query the related attributes (device and port).
     ///
-    /// If `dev_name` is `None`, the first device found is used. Otherwise, the device with the given name is used.
+    /// # Device and port selection
+    ///
+    /// Behavior depends on whether you specify a device name:
+    /// - If `dev_name` is `Some`, the device with the given name will be used,
+    ///   and `port_num` represents the port number of the device. An error will
+    ///   occur if the device does not exist or the port is not active.
+    /// - If `dev_name` is `None`, all devices will be iterated and the
+    ///   `port_num`-th active port will be used. Port numbers start from 1.
+    ///   An error will occur if there are not enough active ports.
+    ///   This behavior is greatly inspired by [eRPC](https://github.com/erpc-io/eRPC/blob/094c17c3cd9b48bcfbed63f455cc85b9976bd43f/src/transport_impl/verbs_common.h#L129).
     pub fn open(dev_name: Option<&str>, port_num: u8, gid_index: u8) -> Result<Self> {
+        if port_num == 0 {
+            return Err(anyhow::anyhow!("port number must be non-zero"));
+        }
         let dev_list = DeviceList::new()?;
-        let dev = dev_list
-            .iter()
-            .find(|dev| dev_name.map_or(true, |name| dev.name() == name))
-            .ok_or_else(|| anyhow::anyhow!("device not found"))?;
+        let (ctx, dev_attr, port_num, port_attr) = if let Some(dev_name) = dev_name {
+            // SAFETY: No other references to the device list here.
+            let dev = unsafe { dev_list.as_slice() }
+                .iter()
+                .find(|dev| dev_name == dev.name())
+                .ok_or_else(|| anyhow::anyhow!("device not found"))?;
 
-        // SAFETY: FFI.
-        let ctx = NonNull::new(unsafe { ibv_open_device(dev.as_raw()) })
-            .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
-        drop(dev_list);
-
-        let dev_attr = {
-            // SAFETY: will be filled by the FFI call.
-            let mut dev_attr = unsafe { mem::zeroed() };
             // SAFETY: FFI.
-            let ret = unsafe { ibv_query_device(ctx.as_ptr(), &mut dev_attr) };
-            if ret != 0 {
-                return from_c_err(ret).with_context(|| "failed to query device attributes");
-            }
-            dev_attr
-        };
-        if port_num > dev_attr.phys_port_cnt {
-            return Err(anyhow::anyhow!("invalid port number {}", port_num));
-        }
+            let ctx = NonNull::new(unsafe { ibv_open_device(dev.as_raw()) })
+                .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))?;
+            drop(dev_list);
 
-        let port_attr = {
-            // SAFETY: will be filled by the FFI call.
-            let mut port_attr = unsafe { mem::zeroed() };
-            // SAFETY: FFI.
-            let ret = unsafe { ___ibv_query_port(ctx.as_ptr(), port_num, &mut port_attr) };
-            if ret != 0 {
-                return from_c_err(ret).with_context(|| "failed to query port attributes");
+            let dev_attr = query_device(ctx.as_ptr())?;
+            if port_num > dev_attr.phys_port_cnt {
+                return Err(anyhow::anyhow!("invalid port number {}", port_num));
             }
-            port_attr
+
+            let port_attr = query_port(ctx.as_ptr(), port_num)?;
+            if port_attr.state != ibv_port_state::IBV_PORT_ACTIVE {
+                return Err(anyhow::anyhow!("port {} is not active", port_num));
+            }
+            (ctx, dev_attr, port_num, port_attr)
+        } else {
+            let DevicePort(ctx, port_num) = dev_list
+                .iter()
+                .nth(port_num as usize - 1)
+                .ok_or_else(|| anyhow::anyhow!("not enough active ports found"))??;
+            let dev_attr = query_device(ctx)?;
+            let port_attr = query_port(ctx, port_num)?;
+
+            // SAFETY: `ibv_context` pointer returned by `DeviceList::iter()` is
+            // guaranteed to be non-null.
+            let ctx = unsafe { NonNull::new_unchecked(ctx) };
+            (ctx, dev_attr, port_num, port_attr)
         };
-        if port_attr.state != ibv_port_state::IBV_PORT_ACTIVE {
-            return Err(anyhow::anyhow!("port {} is not active", port_num));
-        }
 
         let gid = {
+            let gid_index = (gid_index as i32 % port_attr.gid_tbl_len) as u8;
             // SAFETY: will be filled by the FFI call.
             let mut gid = unsafe { mem::zeroed() };
             // SAFETY: FFI.

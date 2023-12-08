@@ -10,7 +10,7 @@ use std::{fmt, io, mem};
 use super::pd::Pd;
 use super::remote_mem::RemoteMem;
 
-use crate::sys::*;
+use crate::bindings::*;
 use anyhow::Result;
 
 #[allow(dead_code)]

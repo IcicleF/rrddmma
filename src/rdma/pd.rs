@@ -6,7 +6,7 @@ use super::context::Context;
 use super::mr::Mr;
 use super::qp::{Qp, QpInitAttr};
 
-use crate::sys::*;
+use crate::bindings::*;
 use anyhow::{Context as _, Result};
 
 #[allow(dead_code)]

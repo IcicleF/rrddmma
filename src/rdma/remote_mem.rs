@@ -1,7 +1,7 @@
 use std::ops::{Bound, RangeBounds};
 
 use super::mr::*;
-use crate::sys::*;
+use crate::bindings::*;
 
 /// Remote registered memory.
 ///

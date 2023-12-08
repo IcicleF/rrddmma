@@ -1,7 +1,7 @@
 use std::fmt;
 use std::net::Ipv6Addr;
 
-pub use crate::sys::ibv_gid;
+pub use crate::bindings::ibv_gid;
 use serde::{Deserialize, Serialize};
 
 /// An 128-bit identifier used to identify a port on a network adapter, a port

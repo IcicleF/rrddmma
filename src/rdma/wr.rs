@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::{fmt, mem, ptr};
 
-use crate::sys::*;
+use crate::bindings::*;
 
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
@@ -187,6 +187,22 @@ impl<'a> SendWr<'a> {
         wr.next = ptr::null_mut();
 
         // Fill in work request details
+        #[cfg(mlnx4)]
+        fn fill_opcode_with_imm(
+            wr: &mut ibv_send_wr,
+            imm: &Option<u32>,
+            op: ibv_wr_opcode::Type,
+            op_with_imm: ibv_wr_opcode::Type,
+        ) {
+            if let Some(imm) = imm {
+                wr.opcode = op_with_imm;
+                wr.imm_data = *imm;
+            } else {
+                wr.opcode = op;
+            }
+        }
+
+        #[cfg(mlnx5)]
         fn fill_opcode_with_imm(
             wr: &mut ibv_send_wr,
             imm: &Option<u32>,
@@ -201,6 +217,7 @@ impl<'a> SendWr<'a> {
                 wr.opcode = op;
             }
         }
+
         match &self.1 {
             SendWrDetails::SendRc { imm, inline } => {
                 fill_opcode_with_imm(
