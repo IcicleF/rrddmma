@@ -53,9 +53,12 @@ impl<'a> RegisteredMem<'a> {
 
         // Leak the buffer to get it as a 'a reference.
         let buf: &'a mut [u8] = Box::leak(buf);
-        let mr = Mr::reg(pd, buf, Permission::default());
+
+        // SAFETY: the buffer is valid.
+        let mr = unsafe { Mr::reg(pd, buf.as_mut_ptr(), buf.len(), Permission::default()) };
 
         // Pack the leaked buffer back.
+        // SAFETY: the buffer is valid and just leaked out from a `Box`.
         let buf = unsafe { Box::from_raw(buf) };
 
         match mr {
@@ -124,7 +127,7 @@ impl DerefMut for RegisteredMem<'_> {
     }
 }
 
-impl<'a, 's> Slicing<'s> for RegisteredMem<'a>
+unsafe impl<'a, 's> Slicing<'s> for RegisteredMem<'a>
 where
     'a: 's,
 {

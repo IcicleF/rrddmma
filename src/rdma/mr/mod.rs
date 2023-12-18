@@ -4,7 +4,6 @@ mod remote;
 mod slicing;
 
 use std::cell::UnsafeCell;
-use std::ffi::c_void;
 use std::io::{self, Error as IoError};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
@@ -72,26 +71,30 @@ impl_ibv_wrapper_traits!(ibv_mr, IbvMr);
 ///
 /// **Subtyping:** [`Mr<'a>`] is *covariant* over `'a`.
 pub struct Mr<'a> {
-    pd: &'a Pd<'a>,
+    pd: PhantomData<&'a Pd<'a>>,
     mr: IbvMr,
     _marker: PhantomData<&'a UnsafeCell<[u8]>>,
 }
 
 impl<'a> Mr<'a> {
-    /// Register a memory region with the given protection domain.
-    pub fn reg(pd: &'a Pd, buf: &'a [u8], perm: Permission) -> io::Result<Self> {
+    /// Register a memory region on the given range of virtual memory.
+    ///
+    /// # Safety
+    ///
+    /// - User must ensure that the virtual address range `[buf, buf + len)` is the
+    ///   correct range to register.
+    ///
+    /// Since the kernel will query the page table when registering an MR, it is
+    /// safe to pass some arbitrary `buf` and `len`, and the kernel will reject
+    /// invalid requests. However, if the registered address range is valid but
+    /// not what the user wants, one-sided RDMA requests from the remote can
+    /// unexpectedly modify the memory, leading to undefined behavior.
+    pub unsafe fn reg(pd: &'a Pd, buf: *mut u8, len: usize, perm: Permission) -> io::Result<Self> {
         // SAFETY: FFI.
-        let mr = unsafe {
-            ibv_reg_mr(
-                pd.as_raw(),
-                buf.as_ptr() as *mut c_void,
-                buf.len(),
-                perm.into(),
-            )
-        };
+        let mr = unsafe { ibv_reg_mr(pd.as_raw(), buf as _, len, perm.into()) };
         let mr = NonNull::new(mr).ok_or_else(IoError::last_os_error)?;
         Ok(Self {
-            pd,
+            pd: PhantomData,
             mr: IbvMr::from(mr),
             _marker: PhantomData,
         })
@@ -137,7 +140,7 @@ impl<'a> Mr<'a> {
     }
 }
 
-impl<'a, 's> Slicing<'s> for Mr<'a>
+unsafe impl<'a, 's> Slicing<'s> for Mr<'a>
 where
     'a: 's,
 {

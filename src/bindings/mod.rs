@@ -4,6 +4,7 @@
 #![allow(deref_nullptr)]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::too_many_arguments)]
+#![allow(unused)]
 
 use libc::{pthread_cond_t, pthread_mutex_t};
 

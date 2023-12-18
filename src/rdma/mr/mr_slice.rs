@@ -44,7 +44,7 @@ impl<'a> MrSlice<'a> {
     }
 }
 
-impl<'a, 's> Slicing<'s> for MrSlice<'a>
+unsafe impl<'a, 's> Slicing<'s> for MrSlice<'a>
 where
     'a: 's,
 {

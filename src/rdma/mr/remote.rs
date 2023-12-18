@@ -44,7 +44,7 @@ impl RemoteMem {
     }
 }
 
-impl<'s> Slicing<'s> for RemoteMem {
+unsafe impl<'s> Slicing<'s> for RemoteMem {
     type Output = Self;
 
     #[inline]

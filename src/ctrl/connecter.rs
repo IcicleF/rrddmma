@@ -102,7 +102,10 @@ impl Connecter {
     /// # Panics
     ///
     /// Panic if the QP is not bound to a local port.
-    pub fn connect<'a>(&'a self, qp: &'a mut Qp<'a>) -> io::Result<Option<QpPeer<'a>>> {
+    pub fn connect<'a, 'b>(&'b self, qp: &'b mut Qp<'a>) -> io::Result<Option<QpPeer<'b>>>
+    where
+        'a: 'b,
+    {
         let ep = qp.endpoint();
         let ep = serde_json::to_string(&ep)?;
 

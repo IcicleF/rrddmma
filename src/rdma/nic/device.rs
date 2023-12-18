@@ -41,7 +41,7 @@ impl IbvDevice {
             .join(name)
             .join("device/numa_node");
         let mut buf = String::new();
-        File::open(path)?.read_to_string(&mut buf);
+        File::open(path)?.read_to_string(&mut buf)?;
 
         Ok(buf
             .trim()

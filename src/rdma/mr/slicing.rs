@@ -21,7 +21,15 @@ fn clip_range(r: impl RangeBounds<usize>, upper: usize) -> Range<usize> {
 /// A slicable memory region.
 ///
 /// The trait is sealed and cannot be implemented outside of this crate.
-pub trait Slicing<'s>: Sealed {
+///
+/// # Safety
+///
+/// - `Self::addr()` must return the correct starting address of the memory region.
+/// - `Self::len()` must return the correct length of the memory region.
+///
+/// Safe methods of this trait rely on these contracts to be upheld.
+#[allow(private_bounds)]
+pub unsafe trait Slicing<'s>: Sealed {
     type Output: 's;
 
     /// Get the starting address of the memory region.
@@ -30,9 +38,16 @@ pub trait Slicing<'s>: Sealed {
     /// Get the length of the memory region.
     fn len(&'s self) -> usize;
 
+    /// Get a slice that represents the entire memory region.
+    fn as_slice(&'s self) -> Self::Output {
+        // SAFETY: bounds guaranteed to be valid.
+        unsafe { self.slice_unchecked(0, self.len()) }
+    }
+
     /// Get a slice from an offset and a length.
     /// Return `None` if the range is out of bounds.
     fn slice(&'s self, offset: usize, len: usize) -> Option<Self::Output> {
+        // SAFETY: bounds checked.
         if offset < self.len() && len <= self.len() - offset {
             Some(unsafe { self.slice_unchecked(offset, len) })
         } else {

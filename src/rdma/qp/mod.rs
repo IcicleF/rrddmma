@@ -272,6 +272,11 @@ impl<'a> Qp<'a> {
     /// Global QKey.
     pub const GLOBAL_QKEY: QKey = 0x114514;
 
+    /// Create a new QP builder.
+    pub fn builder() -> QpBuilder<'a> {
+        Default::default()
+    }
+
     /// Get the underlying `ibv_qp` pointer.
     #[inline]
     pub fn as_raw(&self) -> *mut ibv_qp {
@@ -360,14 +365,14 @@ impl<'a> Qp<'a> {
     ///
     /// - Panic if the specified GID index does not exist, or if there aren't any GIDs of the port.
     /// - Panic if the QP is already bound to a local port.
-    pub fn bind_local_port(&mut self, port: Port, gid_index: Option<u8>) -> io::Result<()> {
+    pub fn bind_local_port(&mut self, port: &Port, gid_index: Option<u8>) -> io::Result<()> {
         assert!(
             self.local_port.is_none(),
             "QP already bound to a local port"
         );
 
         let gid_index = gid_index.unwrap_or(port.recommended_gid().1);
-        self.local_port = Some((port, gid_index));
+        self.local_port = Some((port.clone(), gid_index));
 
         // Bring up QP if UD.
         if !self.qp_type().is_connected() {
@@ -804,6 +809,13 @@ impl<'a> Qp<'a> {
             ibv_post_send(self.as_raw(), &head as *const _ as *mut _, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+}
+
+impl Drop for Qp<'_> {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.qp.destroy() }.expect("cannot destroy QP on drop");
     }
 }
 

@@ -82,6 +82,7 @@ impl NicFinder {
     ///
     /// Checked filter(s):
     /// - Port speed
+    /// - Port link layer protocol
     ///
     /// If a filter type is set but errors occurred when querying the port,
     /// the error will be ignored and the filter will be considered unmatched.
@@ -96,7 +97,7 @@ impl NicFinder {
 
         // Port speed.
         let match_speed = match self.port_speed {
-            PortSpeedFilter::AtLeast(speed) => speed >= port.speed().gbps(),
+            PortSpeedFilter::AtLeast(speed) => speed <= port.speed().gbps(),
             PortSpeedFilter::Exactly(speed) => speed == port.speed().gbps(),
         };
 
@@ -199,7 +200,7 @@ impl NicFinder {
 
     /// Find the first eligible RDMA device and open it.
     #[inline]
-    pub fn probe(mut self) -> Result<Nic, NicProbeError> {
+    pub fn probe(self) -> Result<Nic, NicProbeError> {
         self.probe_nth_dev(0)
     }
 
@@ -207,7 +208,7 @@ impl NicFinder {
     /// Start counting from 0.
     ///
     /// The returned device contains information of all its physical ports.
-    pub fn probe_nth_dev(mut self, mut n: usize) -> Result<Nic, NicProbeError> {
+    pub fn probe_nth_dev(self, mut n: usize) -> Result<Nic, NicProbeError> {
         let dev_list = IbvDeviceList::new()?;
         for dev in &dev_list {
             let ctx = dev.open()?;
@@ -239,7 +240,7 @@ impl NicFinder {
     /// Start counting from 0.
     ///
     /// The returned device contains information of only the specified port.
-    pub fn probe_nth_port(mut self, mut n: usize) -> Result<Nic, NicProbeError> {
+    pub fn probe_nth_port(self, mut n: usize) -> Result<Nic, NicProbeError> {
         let dev_list = IbvDeviceList::new()?;
         for dev in &dev_list {
             let ctx = dev.open()?;
@@ -262,7 +263,7 @@ impl NicFinder {
             }
 
             // SAFETY: call only once and no UAF.
-            unsafe { ctx.close() };
+            unsafe { ctx.close()? };
         }
         Err(NicProbeError::NotFound)
     }

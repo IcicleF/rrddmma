@@ -114,7 +114,7 @@ impl GidTyped {
     }
 
     /// Query the GID from the specified device port.
-    pub fn query(
+    pub(crate) fn query(
         ctx: IbvContext,
         port_num: u8,
         port_attr: &ibv_port_attr,
@@ -127,8 +127,7 @@ impl GidTyped {
 impl PartialEq for GidTyped {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        // SAFETY: byte-level reinterpretation of POD union.
-        unsafe { self.gid == other.gid }
+        self.gid.eq(&other.gid)
     }
 }
 

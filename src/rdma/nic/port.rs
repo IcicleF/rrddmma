@@ -8,6 +8,7 @@ use crate::rdma::context::IbvContext;
 use crate::rdma::gid::*;
 
 /// Physical port information.
+#[derive(Clone)]
 pub struct Port {
     /// Index of this port.
     num: u8,
@@ -18,6 +19,9 @@ pub struct Port {
     /// GIDs of this port.
     gids: Vec<GidTyped>,
 }
+
+unsafe impl Send for Port {}
+unsafe impl Sync for Port {}
 
 /// Port query error type.
 #[derive(Debug, Error)]

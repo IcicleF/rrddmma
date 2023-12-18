@@ -97,7 +97,7 @@ pub struct QpBuilder<'a> {
 impl<'a> QpBuilder<'a> {
     /// Unwrap the builder and return the underlying attributes.
     #[inline]
-    pub(crate) fn unwrap(self) -> QpInitAttr<'a> {
+    pub(super) fn unwrap(self) -> QpInitAttr<'a> {
         QpInitAttr {
             send_cq: self.send_cq.expect("send CQ must be set"),
             recv_cq: self.recv_cq.expect("recv CQ must be set"),
@@ -167,6 +167,12 @@ impl<'a> QpBuilder<'a> {
     #[inline]
     pub fn build(self, pd: &'a Pd<'a>) -> Result<Qp<'a>, QpCreationError> {
         Qp::new(pd, self)
+    }
+}
+
+impl Default for QpBuilder<'_> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

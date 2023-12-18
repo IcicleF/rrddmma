@@ -1,6 +1,6 @@
 use std::fmt;
 use std::io::{self, Error as IoError};
-use std::mem;
+use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 use crate::rdma::{gid::Gid, pd::Pd, qp::Qp, types::*};
@@ -30,13 +30,6 @@ impl QpEndpoint {
             qpn: qp.qp_num(),
         })
     }
-
-    /// Create a dummy endpoint.
-    /// This is useful when modifying a UD QP.
-    pub(crate) fn dummy() -> Self {
-        // SAFETY: POD type.
-        unsafe { mem::zeroed() }
-    }
 }
 
 /// Wrapper of [`*mut ibv_ah`].
@@ -61,7 +54,7 @@ impl_ibv_wrapper_traits!(ibv_ah, IbvAh);
 
 /// Remote peer information that can be used in sends.
 pub struct QpPeer<'a> {
-    pd: &'a Pd<'a>,
+    pd: PhantomData<&'a Pd<'a>>,
     ah: IbvAh,
     ep: QpEndpoint,
 }
@@ -97,7 +90,7 @@ impl<'a> QpPeer<'a> {
         let ah = unsafe { ibv_create_ah(pd.as_raw(), &mut ah_attr) };
         let ah = NonNull::new(ah).ok_or_else(IoError::last_os_error)?;
         Ok(Self {
-            pd,
+            pd: PhantomData,
             ah: IbvAh::from(ah),
             ep,
         })

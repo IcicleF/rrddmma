@@ -74,7 +74,7 @@ impl From<u32> for QpType {
             ibv_qp_type::IBV_QPT_UD => QpType::Ud,
             #[cfg(mlnx4)]
             ibv_qp_type::IBV_QPT_XRC => QpType::Xrc,
-            ibv_qp_type::IBV_QPT_RAW_PACKET | ibv_qp_type::IBV_QPT_RAW_ETH => QpType::RawPacket,
+            ibv_qp_type::IBV_QPT_RAW_PACKET => QpType::RawPacket,
             ibv_qp_type::IBV_QPT_XRC_SEND => QpType::XrcIni,
             ibv_qp_type::IBV_QPT_XRC_RECV => QpType::XrcTgt,
             #[cfg(mlnx4)]

@@ -1,40 +1,48 @@
 use rrddmma::{wrap::RegisteredMem, *};
 use std::{net::Ipv4Addr, thread};
 
-fn client(pd: Pd) -> anyhow::Result<()> {
-    let cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
-    let qp = Qp::new(pd.clone(), QpBuilder::default_rc(cq))?;
-
-    ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&qp)?;
+fn client() -> anyhow::Result<()> {
+    let Nic { context, ports } = Nic::finder().dev_name("mlx5_0").probe()?;
+    let pd = Pd::new(&context)?;
+    let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
+    let mut qp = Qp::builder()
+        .qp_type(QpType::Rc)
+        .caps(QpCaps::default())
+        .send_cq(&cq)
+        .recv_cq(&cq)
+        .sq_sig_all(true)
+        .build(&pd)?;
+    qp.bind_local_port(&ports[0], None)?;
+    ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&mut qp)?;
 
     // Send the message to the server.
-    let mem = RegisteredMem::new_with_content(pd, "Hello, rrddmma!".as_bytes())?;
+    let mem = RegisteredMem::new_with_content(qp.pd(), "Hello, rrddmma!".as_bytes())?;
     qp.send(&[mem.as_slice()], None, None, 0, true, true)?;
-    qp.scq().poll_one_blocking().and_then(|wc| wc.result())?;
+    qp.scq().poll_one_blocking()?;
     Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
-    // Create RDMA context using the first active port found, use the GID index 3.
-    // This should be an appropriate configuration for both IB and RoCE.
-    let context = Context::open(None, 1, 3)?;
-    let pd = Pd::new(context)?;
+    let cli = thread::spawn(client);
 
-    let cli = {
-        let pd = pd.clone();
-        thread::spawn(move || client(pd))
-    };
-
-    let cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
-    let qp = Qp::new(pd.clone(), QpBuilder::default_rc(cq))?;
-
-    ctrl::Connecter::new(None)?.connect(&qp)?;
+    let Nic { context, ports } = Nic::finder().dev_name("mlx5_0").probe()?;
+    let pd = Pd::new(&context)?;
+    let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
+    let mut qp = Qp::builder()
+        .qp_type(QpType::Rc)
+        .caps(QpCaps::default())
+        .send_cq(&cq)
+        .recv_cq(&cq)
+        .sq_sig_all(true)
+        .build(&pd)?;
+    qp.bind_local_port(&ports[0], None)?;
+    ctrl::Connecter::new(None)?.connect(&mut qp)?;
 
     // Receive a message from the client.
-    let mem = RegisteredMem::new(pd, 4096)?;
+    let mem = RegisteredMem::new(qp.pd(), 4096)?;
     qp.recv(&[mem.as_slice()], 0)?;
     let wc = qp.rcq().poll_one_blocking()?;
-    println!("{}", String::from_utf8_lossy(&mem[..wc.result()?]));
+    println!("{}", String::from_utf8_lossy(&mem[..wc.ok()?]));
 
     cli.join().unwrap()?;
     Ok(())
