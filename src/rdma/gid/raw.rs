@@ -1,16 +1,19 @@
 use std::fmt;
 use std::net::Ipv6Addr;
 
-pub use crate::bindings::ibv_gid;
+#[cfg(mlnx5)]
+use std::hint;
+
 use serde::{Deserialize, Serialize};
+
+use crate::bindings::*;
 
 /// An 128-bit identifier used to identify a port on a network adapter, a port
 /// on a router, or a multicast group.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct Gid(ibv_gid);
+pub struct Gid(pub ibv_gid);
 
-// SAFETY: [`ibv_gid`] is a PoD type, and so is [`Gid`].
 unsafe impl Send for Gid {}
 unsafe impl Sync for Gid {}
 
@@ -25,8 +28,7 @@ impl fmt::Debug for Gid {
 impl PartialEq for Gid {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        // SAFETY: byte-level reinterpretation of the fixed-size [`ibv_gid`]
-        // union is always safe.
+        // SAFETY: byte-level reinterpretation of POD union.
         unsafe { self.0.raw == other.0.raw }
     }
 }
@@ -57,8 +59,7 @@ impl From<Ipv6Addr> for Gid {
 impl From<Gid> for Ipv6Addr {
     #[inline]
     fn from(gid: Gid) -> Self {
-        // SAFETY: byte-level reinterpretation of the fixed-size [`ibv_gid`]
-        // union is always safe.
+        // SAFETY: byte-level reinterpretation of POD union.
         Ipv6Addr::from(unsafe { gid.0.raw })
     }
 }
@@ -73,8 +74,7 @@ impl From<[u8; 16]> for Gid {
 impl From<Gid> for [u8; 16] {
     #[inline]
     fn from(gid: Gid) -> Self {
-        // SAFETY: byte-level reinterpretation of the fixed-size [`ibv_gid`]
-        // union is always safe.
+        // SAFETY: byte-level reinterpretation of POD union.
         unsafe { gid.0.raw }
     }
 }

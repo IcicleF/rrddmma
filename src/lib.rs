@@ -28,7 +28,10 @@
 //!
 //! [`rdma-sys`]: https://docs.rs/rdma-sys/latest/rdma_sys/
 
-/// Bindings.
+#[cfg(not(target_os = "linux"))]
+compile_error!("`rrddmma` currently only supports Linux");
+
+/// C bindings.
 mod bindings;
 
 /// Shared util functions.
@@ -38,15 +41,14 @@ mod utils;
 /// Not to be publicly exposed, instead `pub use` necessary items.
 mod rdma;
 
-pub use rdma::context::Context;
-pub use rdma::cq::{Cq, Wc, WcOpcode, WcStatus};
-pub use rdma::device::{Device, DeviceList, DevicePort};
-pub use rdma::gid::Gid;
-pub use rdma::mr::{Mr, MrSlice};
-pub use rdma::pd::Pd;
-pub use rdma::qp::{Qp, QpCaps, QpEndpoint, QpInitAttr, QpPeer, QpState, QpType};
-pub use rdma::remote_mem::RemoteMem;
-pub use rdma::wr::{RawRecvWr, RawSendWr, RecvWr, SendWr, SendWrDetails};
+pub use rdma::context::*;
+pub use rdma::cq::*;
+pub use rdma::gid::*;
+pub use rdma::mr::*;
+pub use rdma::nic::*;
+pub use rdma::pd::*;
+pub use rdma::qp::*;
+pub use rdma::wr::*;
 
 /// Type aliases and re-exports for RDMA-related operations.
 pub use rdma::types;

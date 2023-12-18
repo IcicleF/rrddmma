@@ -3,7 +3,7 @@ use std::{net::Ipv4Addr, thread};
 
 fn client(pd: Pd) -> anyhow::Result<()> {
     let cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
-    let qp = Qp::new(pd.clone(), QpInitAttr::default_rc(cq))?;
+    let qp = Qp::new(pd.clone(), QpBuilder::default_rc(cq))?;
 
     ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&qp)?;
 
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let cq = Cq::new(pd.context().clone(), Cq::DEFAULT_CQ_DEPTH)?;
-    let qp = Qp::new(pd.clone(), QpInitAttr::default_rc(cq))?;
+    let qp = Qp::new(pd.clone(), QpBuilder::default_rc(cq))?;
 
     ctrl::Connecter::new(None)?.connect(&qp)?;
 
@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     let mem = RegisteredMem::new(pd, 4096)?;
     qp.recv(&[mem.as_slice()], 0)?;
     let wc = qp.rcq().poll_one_blocking()?;
-    assert_eq!("Hello, rrddmma!", String::from_utf8_lossy(&mem[..wc.result()?]));
+    println!("{}", String::from_utf8_lossy(&mem[..wc.result()?]));
 
     cli.join().unwrap()?;
     Ok(())

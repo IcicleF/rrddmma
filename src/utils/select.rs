@@ -1,3 +1,5 @@
+//! Provide a `select` method for [`bool`], integer primitives, [`Option`], and [`Result`].
+
 /// Implements a `select` method for primitive types that consumes two inputs
 /// and returns one of them based on the value of the selector.
 // Carbon language seems good at expressing this kind of thing :)

@@ -1,237 +1,165 @@
-use std::ptr::NonNull;
-use std::sync::Arc;
-use std::{fmt, io, mem, ptr};
+mod builder;
+mod peer;
+mod state;
+mod ty;
 
-use crate::rdma::context::Context;
-use crate::rdma::cq::Cq;
-use crate::rdma::mr::*;
-use crate::rdma::pd::Pd;
-use crate::rdma::remote_mem::*;
-use crate::rdma::types::*;
-use crate::rdma::wr::*;
+use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
+use std::ptr::NonNull;
+use std::{fmt, mem, ptr};
+
+use thiserror::Error;
+
+pub use self::builder::*;
+pub use self::peer::*;
+pub use self::state::*;
+pub use self::ty::*;
+use crate::bindings::*;
+use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, types::*, wr::*};
 use crate::utils::{interop::*, select::*};
 
-use crate::bindings::*;
-use anyhow::{Context as _, Result};
-use libc;
+/// Wrapper for `*mut ibv_qp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub(crate) struct IbvQp(NonNull<ibv_qp>);
 
-mod attr;
-pub use attr::{QpCaps, QpInitAttr};
+impl IbvQp {
+    /// Destroy the QP.
+    ///
+    /// # Safety
+    ///
+    /// - A QP must not be destroyed more than once.
+    /// - Destroyed QPs must not be used anymore.
+    pub unsafe fn destroy(self) -> io::Result<()> {
+        // SAFETY: FFI.
+        let ret = ibv_destroy_qp(self.as_ptr());
+        from_c_ret(ret)
+    }
 
-mod peer;
-pub use peer::{QpEndpoint, QpPeer};
+    /// Get the QP type.
+    ///
+    /// # Panics
+    ///
+    /// Panic if the QP contains an unknown type, which shouldn't happen.
+    #[inline]
+    pub fn qp_type(&self) -> QpType {
+        // SAFETY: `self` points to a valid `ibv_qp` instance.
+        let ty = unsafe { (*self.as_ptr()).qp_type };
+        ty.into()
+    }
 
-/// Queue pair type.
-#[derive(fmt::Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QpType {
-    /// Reliable connection
-    Rc,
-    /// Unreliable datagram
-    Ud,
-}
+    /// Get the QP number.
+    #[inline]
+    pub fn qp_num(&self) -> u32 {
+        // SAFETY: `self` points to a valid `ibv_qp` instance.
+        unsafe { (*self.as_ptr()).qp_num }
+    }
 
-impl From<QpType> for u32 {
-    fn from(qp_type: QpType) -> Self {
-        match qp_type {
-            QpType::Rc => ibv_qp_type::IBV_QPT_RC,
-            QpType::Ud => ibv_qp_type::IBV_QPT_UD,
-        }
+    /// Get the QP state.
+    #[inline]
+    pub fn qp_state(&self) -> QpState {
+        // SAFETY: `self` points to a valid `ibv_qp` instance.
+        let state = unsafe { (*self.as_ptr()).state };
+        state.into()
     }
 }
 
-impl From<u32> for QpType {
-    fn from(qp_type: u32) -> Self {
-        match qp_type {
-            ibv_qp_type::IBV_QPT_RC => QpType::Rc,
-            ibv_qp_type::IBV_QPT_UD => QpType::Ud,
-            _ => panic!("invalid qp type"),
-        }
-    }
+impl_ibv_wrapper_traits!(ibv_qp, IbvQp);
+
+/// Queue pair creation error type.
+#[derive(Debug, Error)]
+pub enum QpCreationError {
+    /// **I/O error:** `libibverbs` interfaces returned an error.
+    #[error("I/O error from ibverbs")]
+    IoError(#[from] io::Error),
+
+    /// **Capability error:** specified capabilities are not supported.
+    #[error("capability not enough: {0} supports up to {1}, {2} required")]
+    CapabilityNotEnough(String, u32, u32),
 }
-
-/// Queue pair state.
-#[derive(fmt::Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum QpState {
-    /// Reset.
-    Reset = ibv_qp_state::IBV_QPS_RESET as _,
-    /// Initialized.
-    Init = ibv_qp_state::IBV_QPS_INIT as _,
-    /// Ready To Receive.
-    Rtr = ibv_qp_state::IBV_QPS_RTR as _,
-    /// Ready To Send.
-    Rts = ibv_qp_state::IBV_QPS_RTS as _,
-    /// Send Queue Drain.
-    Sqd = ibv_qp_state::IBV_QPS_SQD as _,
-    /// Send Queue Error.
-    Sqe = ibv_qp_state::IBV_QPS_SQE as _,
-    /// Error.
-    Error = ibv_qp_state::IBV_QPS_ERR as _,
-    /// Unknown.
-    Unknown = ibv_qp_state::IBV_QPS_UNKNOWN as _,
-}
-
-impl From<u32> for QpState {
-    fn from(qp_state: u32) -> Self {
-        match qp_state {
-            ibv_qp_state::IBV_QPS_RESET => QpState::Reset,
-            ibv_qp_state::IBV_QPS_INIT => QpState::Init,
-            ibv_qp_state::IBV_QPS_RTR => QpState::Rtr,
-            ibv_qp_state::IBV_QPS_RTS => QpState::Rts,
-            ibv_qp_state::IBV_QPS_SQD => QpState::Sqd,
-            ibv_qp_state::IBV_QPS_SQE => QpState::Sqe,
-            ibv_qp_state::IBV_QPS_ERR => QpState::Error,
-            ibv_qp_state::IBV_QPS_UNKNOWN => QpState::Unknown,
-            x => panic!("invalid QP state: {}", x),
-        }
-    }
-}
-
-struct QpInner {
-    pd: Pd,
-    qp: NonNull<ibv_qp>,
-    init_attr: QpInitAttr,
-}
-
-unsafe impl Send for QpInner {}
-unsafe impl Sync for QpInner {}
-
-impl Drop for QpInner {
-    fn drop(&mut self) {
-        unsafe { ibv_destroy_qp(self.qp.as_ptr()) };
-    }
-}
-
-impl PartialEq for QpInner {
-    fn eq(&self, other: &Self) -> bool {
-        self.qp.as_ptr() == other.qp.as_ptr()
-    }
-}
-
-impl Eq for QpInner {}
 
 /// Queue pair.
 ///
-/// This type is a simple wrapper of an `Arc` and is guaranteed to have the
-/// same memory layout with it.
-#[derive(Clone, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct Qp {
-    inner: Arc<QpInner>,
+/// **Subtyping:** [`Qp<'a>`] is *covariant* over `'a`.
+pub struct Qp<'a> {
+    pd: &'a Pd<'a>,
+    qp: IbvQp,
+    init_attr: QpInitAttr<'a>,
+
+    local_port: Option<(Port, GidIndex)>,
+    peer: Option<QpPeer<'a>>,
 }
 
-impl fmt::Debug for Qp {
+impl fmt::Debug for Qp<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("Qp<{:p}>", self.as_raw()))
     }
 }
 
-impl Qp {
-    /// Global initial packet sequence number.
-    pub const GLOBAL_PSN: Psn = 0;
-
-    /// Global QKey.
-    pub const GLOBAL_QKEY: QKey = 0x114514;
+impl<'a> Qp<'a> {
+    /// Check whether the given capabilities are supported by the device.
+    fn check_caps(ctx: &'a Context, caps: &QpCaps) -> Result<(), QpCreationError> {
+        let attr = ctx.attr();
+        if caps.max_send_wr > attr.max_qp_wr as _ {
+            return Err(QpCreationError::CapabilityNotEnough(
+                "max_send_wr".to_string(),
+                attr.max_qp_wr as _,
+                caps.max_send_wr,
+            ));
+        }
+        if caps.max_recv_wr > attr.max_qp_wr as _ {
+            return Err(QpCreationError::CapabilityNotEnough(
+                "max_recv_wr".to_string(),
+                attr.max_qp_wr as _,
+                caps.max_recv_wr,
+            ));
+        }
+        if caps.max_send_sge > attr.max_sge as _ {
+            return Err(QpCreationError::CapabilityNotEnough(
+                "max_send_sge".to_string(),
+                attr.max_sge as _,
+                caps.max_send_sge,
+            ));
+        }
+        if caps.max_recv_sge > attr.max_sge as _ {
+            return Err(QpCreationError::CapabilityNotEnough(
+                "max_recv_sge".to_string(),
+                attr.max_sge as _,
+                caps.max_recv_sge,
+            ));
+        }
+        Ok(())
+    }
 
     /// Create a new queue pair with the given initialization attributes.
-    pub fn new(pd: Pd, init_attr: QpInitAttr) -> Result<Self> {
-        let qp = NonNull::new(unsafe {
-            let mut init_attr = init_attr.to_actual_init_attr();
+    pub(crate) fn new(pd: &'a Pd<'a>, init_attr: QpBuilder<'a>) -> Result<Self, QpCreationError> {
+        let init_attr = init_attr.unwrap();
+        Self::check_caps(pd.context(), &init_attr.caps)?;
+
+        let qp = unsafe {
+            let mut init_attr = (&init_attr).into();
             ibv_create_qp(pd.as_raw(), &mut init_attr)
-        })
-        .ok_or(anyhow::anyhow!(io::Error::last_os_error()))
-        .with_context(|| "failed to create queue pair")?;
+        };
+        let qp = NonNull::new(qp).ok_or_else(io::Error::last_os_error)?;
 
         let qp = Qp {
-            inner: Arc::new(QpInner { pd, qp, init_attr }),
+            pd,
+            qp: IbvQp::from(qp),
+            init_attr,
+            local_port: None,
+            peer: None,
         };
-        if qp.qp_type() == QpType::Ud {
-            qp.connect(unsafe { &QpEndpoint::dummy() })?;
-        }
         Ok(qp)
     }
 
-    /// Get the underlying `ibv_qp` pointer.
-    #[inline]
-    pub fn as_raw(&self) -> *mut ibv_qp {
-        self.inner.qp.as_ptr()
-    }
-
-    /// Get the protection domain of the queue pair.
-    #[inline]
-    pub fn pd(&self) -> &Pd {
-        &self.inner.pd
-    }
-
-    /// Get the context of the queue pair.
-    #[inline]
-    pub fn context(&self) -> &Context {
-        self.inner.pd.context()
-    }
-
-    /// Get the type of the queue pair.
-    #[inline]
-    pub fn qp_type(&self) -> QpType {
-        let ty = unsafe { (*self.inner.qp.as_ptr()).qp_type };
-        match ty {
-            ibv_qp_type::IBV_QPT_RC => QpType::Rc,
-            ibv_qp_type::IBV_QPT_UD => QpType::Ud,
-            _ => panic!("unknown qp type"),
-        }
-    }
-
-    /// Get the queue pair number.
-    #[inline]
-    pub(crate) fn qp_num(&self) -> u32 {
-        unsafe { (*self.inner.qp.as_ptr()).qp_num }
-    }
-
-    /// Get the current state of the queue pair.
-    #[inline]
-    pub fn state(&self) -> QpState {
-        let state = unsafe { (*self.inner.qp.as_ptr()).state };
-        match state {
-            ibv_qp_state::IBV_QPS_RESET => QpState::Reset,
-            ibv_qp_state::IBV_QPS_INIT => QpState::Init,
-            ibv_qp_state::IBV_QPS_RTR => QpState::Rtr,
-            ibv_qp_state::IBV_QPS_RTS => QpState::Rts,
-            ibv_qp_state::IBV_QPS_ERR => QpState::Error,
-            _ => panic!("unknown qp state"),
-        }
-    }
-
-    /// Get the capabilities of this QP.
-    #[inline]
-    pub fn caps(&self) -> &QpCaps {
-        &self.inner.init_attr.cap
-    }
-
-    /// Get the endpoint information of this QP.
-    #[inline]
-    pub fn endpoint(&self) -> QpEndpoint {
-        QpEndpoint::new(self)
-    }
-
-    /// Get the associated send completion queue.
-    #[inline]
-    pub fn scq(&self) -> &Cq {
-        &self.inner.init_attr.send_cq
-    }
-
-    /// Get the associated receive completion queue.
-    #[inline]
-    pub fn rcq(&self) -> &Cq {
-        &self.inner.init_attr.recv_cq
-    }
-
-    fn modify_reset_to_init(&self) -> Result<()> {
+    /// Modify the queue pair from Reset to Init.
+    fn modify_reset2init(&self) -> io::Result<()> {
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE
             | ibv_qp_attr_mask::IBV_QP_PKEY_INDEX
             | ibv_qp_attr_mask::IBV_QP_PORT;
         attr.qp_state = ibv_qp_state::IBV_QPS_INIT;
         attr.pkey_index = 0;
-        attr.port_num = self.context().port_num();
+        attr.port_num = self.local_port.as_ref().unwrap().0.num();
 
         if self.qp_type() == QpType::Rc {
             attr.qp_access_flags = (ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
@@ -244,33 +172,37 @@ impl Qp {
             attr.qkey = Self::GLOBAL_QKEY;
         }
 
-        let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
+        let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
         from_c_ret(ret)
     }
 
-    fn modify_init_to_rtr(&self, ep: &QpEndpoint) -> Result<()> {
+    /// Modify the queue pair from Init to RTR.
+    fn modify_init2rtr(&self) -> io::Result<()> {
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE;
         attr.qp_state = ibv_qp_state::IBV_QPS_RTR;
 
         if self.qp_type() == QpType::Rc {
-            let ctx = self.inner.pd.context();
+            let (port, gid_idx) = self.local_port.as_ref().unwrap();
+            let peer = self.peer.as_ref().unwrap();
+            let gid_idx = *gid_idx;
+            let ep = peer.endpoint();
 
-            attr.path_mtu = ctx.mtu_raw();
+            attr.path_mtu = port.mtu() as _;
             attr.dest_qp_num = ep.qpn;
-            attr.rq_psn = Self::GLOBAL_PSN;
+            attr.rq_psn = Self::GLOBAL_INIT_PSN;
             attr.max_dest_rd_atomic = 16;
             attr.min_rnr_timer = 12;
 
-            attr.ah_attr.grh.dgid = ibv_gid::from(ep.gid);
+            attr.ah_attr.grh.dgid = ep.gid.into();
             attr.ah_attr.grh.flow_label = 0;
-            attr.ah_attr.grh.sgid_index = ctx.gid_index();
+            attr.ah_attr.grh.sgid_index = gid_idx;
             attr.ah_attr.grh.hop_limit = 0xFF;
             attr.ah_attr.grh.traffic_class = 0;
             attr.ah_attr.dlid = ep.lid;
             attr.ah_attr.sl = 0;
             attr.ah_attr.src_path_bits = 0;
-            attr.ah_attr.port_num = ctx.port_num();
+            attr.ah_attr.port_num = port.num();
             attr.ah_attr.is_global = 1;
 
             attr_mask |= ibv_qp_attr_mask::IBV_QP_AV
@@ -281,15 +213,16 @@ impl Qp {
                 | ibv_qp_attr_mask::IBV_QP_MIN_RNR_TIMER;
         }
 
-        let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
+        let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
         from_c_ret(ret)
     }
 
-    fn modify_rtr_to_rts(&self) -> Result<()> {
+    /// Modify the queue pair from RTR to RTS.
+    fn modify_rtr2rts(&self) -> io::Result<()> {
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE | ibv_qp_attr_mask::IBV_QP_SQ_PSN;
         attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
-        attr.sq_psn = Self::GLOBAL_PSN;
+        attr.sq_psn = Self::GLOBAL_INIT_PSN;
 
         if self.qp_type() == QpType::Rc {
             attr.max_rd_atomic = 16;
@@ -303,26 +236,11 @@ impl Qp {
                 | ibv_qp_attr_mask::IBV_QP_RNR_RETRY;
         }
 
-        let ret = unsafe { ibv_modify_qp(self.inner.qp.as_ptr(), &mut attr, attr_mask.0 as i32) };
+        let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
         from_c_ret(ret)
     }
 
-    /// Establish connection with the remote endpoint.
-    /// If QP type is UD
-    pub fn connect(&self, ep: &QpEndpoint) -> Result<()> {
-        if self.state() == QpState::Reset {
-            self.modify_reset_to_init()?;
-        }
-        if self.state() == QpState::Init {
-            self.modify_init_to_rtr(ep)?;
-        }
-        if self.state() == QpState::Rtr {
-            self.modify_rtr_to_rts()?;
-        }
-        Ok(())
-    }
-
-    /// Explain [`ibv_post_recv`] errors, for internal use.
+    /// Explain [`ibv_post_recv`] errors.
     fn recv_err_explanation(ret: i32) -> Option<&'static str> {
         match ret {
             libc::EINVAL => Some("invalid work request"),
@@ -334,11 +252,173 @@ impl Qp {
         }
     }
 
+    /// Explain [`ibv_post_send`] errors.
+    fn send_err_explanation(ret: i32) -> Option<&'static str> {
+        match ret {
+            libc::EINVAL => Some("invalid work request"),
+            libc::ENOMEM => {
+                Some("send queue is full, or not enough resources to complete this operation")
+            }
+            libc::EFAULT => Some("invalid QP"),
+            _ => None,
+        }
+    }
+}
+
+impl<'a> Qp<'a> {
+    /// Global initial packet sequence number.
+    pub const GLOBAL_INIT_PSN: Psn = 0;
+
+    /// Global QKey.
+    pub const GLOBAL_QKEY: QKey = 0x114514;
+
+    /// Get the underlying `ibv_qp` pointer.
+    #[inline]
+    pub fn as_raw(&self) -> *mut ibv_qp {
+        self.qp.as_ptr()
+    }
+
+    /// Get the protection domain of the queue pair.
+    #[inline]
+    pub fn pd(&self) -> &'a Pd {
+        self.pd
+    }
+
+    /// Get the context of the queue pair.
+    #[inline]
+    pub fn context(&self) -> &'a Context {
+        self.pd.context()
+    }
+
+    /// Get the type of the queue pair.
+    #[inline]
+    pub fn qp_type(&self) -> QpType {
+        self.qp.qp_type()
+    }
+
+    /// Get the queue pair number.
+    #[inline]
+    pub(crate) fn qp_num(&self) -> u32 {
+        self.qp.qp_num()
+    }
+
+    /// Get the current state of the queue pair.
+    #[inline]
+    pub fn state(&self) -> QpState {
+        self.qp.qp_state()
+    }
+
+    /// Get the capabilities of this QP.
+    #[inline]
+    pub fn caps(&self) -> &QpCaps {
+        &self.init_attr.caps
+    }
+
+    /// Get the information of the local port that this QP is bound to.
+    #[inline]
+    pub fn port(&self) -> Option<&(Port, GidIndex)> {
+        self.local_port.as_ref()
+    }
+
+    /// Get the information of the remote peer that this QP is connected to.
+    #[inline]
+    pub fn peer(&self) -> Option<&QpPeer> {
+        self.peer.as_ref()
+    }
+
+    /// Get the endpoint information of this QP.
+    /// Return `None` if the QP is not yet bound to a local port.
+    #[inline]
+    pub fn endpoint(&self) -> Option<QpEndpoint> {
+        QpEndpoint::new(self)
+    }
+
+    /// Get the associated send completion queue.
+    #[inline]
+    pub fn scq(&self) -> &'a Cq {
+        self.init_attr.send_cq
+    }
+
+    /// Get the associated receive completion queue.
+    #[inline]
+    pub fn rcq(&self) -> &'a Cq {
+        self.init_attr.recv_cq
+    }
+
+    /// Bind the queue pair to a local port.
+    /// Will modify the QP to RTS state if it is an unreliable datagram QP at
+    /// RESET state.
+    ///
+    /// This method is **NOT** commutative with [`Self::bind_peer()`]. You must
+    /// bind the QP to a local port before binding it to a remote peer.
+    ///
+    /// If no GID index is specified (i.e., `gid_index` is `None`), this
+    /// method will use the recommended GID. See documentation of
+    /// [`Port::recommended_gid()`] for more information.
+    ///
+    /// # Panics
+    ///
+    /// - Panic if the specified GID index does not exist, or if there aren't any GIDs of the port.
+    /// - Panic if the QP is already bound to a local port.
+    pub fn bind_local_port(&mut self, port: Port, gid_index: Option<u8>) -> io::Result<()> {
+        assert!(
+            self.local_port.is_none(),
+            "QP already bound to a local port"
+        );
+
+        let gid_index = gid_index.unwrap_or(port.recommended_gid().1);
+        self.local_port = Some((port, gid_index));
+
+        // Bring up QP if UD.
+        if !self.qp_type().is_connected() {
+            self.modify_reset2init()?;
+            self.modify_init2rtr()?;
+            self.modify_rtr2rts()?;
+        }
+        Ok(())
+    }
+
+    /// Bind the queue pair to a remote peer.
+    /// Will modify the QP to RTS state if it is an connected QP at RESET state
+    /// and already bound to a local port.
+    ///
+    /// This method is **NOT** commutative with [`Self::bind_local_port()`].
+    /// You must bind the QP to a local port before binding it to a remote peer.
+    ///
+    /// # Panics
+    ///
+    /// - Panic if the QP type is unreliable datagram.
+    /// - Panic if the QP is not yet bound to a local port.
+    /// - Panic if the QP is already bound to a remote peer.
+    pub fn bind_peer(&mut self, ep: QpEndpoint) -> io::Result<()> {
+        assert!(
+            self.qp_type().is_connected(),
+            "cannot bind UD/RawPacket QP to remote peers"
+        );
+        assert!(
+            self.local_port.is_some(),
+            "QP not yet bound to a local port"
+        );
+        assert!(self.peer.is_none(), "QP already bound to a remote peer");
+
+        self.peer = Some(QpPeer::new(
+            self.pd,
+            self.local_port.as_ref().unwrap().1,
+            ep,
+        )?);
+
+        // Bring up QP.
+        self.modify_reset2init()?;
+        self.modify_init2rtr()?;
+        self.modify_rtr2rts()?;
+        Ok(())
+    }
+
     /// Post a RDMA recv request.
     ///
     /// **NOTE:** This method has no mutable borrows to its parameters, but can
     /// cause the content of the buffers to be modified!
-    pub fn recv(&self, local: &[MrSlice], wr_id: u64) -> Result<()> {
+    pub fn recv(&self, local: &[MrSlice], wr_id: u64) -> io::Result<()> {
         let mut sgl = build_sgl(local);
         let mut wr = ibv_recv_wr {
             wr_id,
@@ -352,7 +432,7 @@ impl Qp {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_recv(self.as_raw(), &mut wr, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::recv_err_explanation)
     }
@@ -360,7 +440,8 @@ impl Qp {
     /// Post a list of receive work requests to the queue pair in order.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
-    pub fn post_recv(&self, ops: &[RecvWr]) -> Result<()> {
+    pub fn post_recv(&self, ops: &[RecvWr]) -> io::Result<()> {
+        // Do nothing if no work requests are to be posted.
         if ops.is_empty() {
             return Ok(());
         }
@@ -375,7 +456,7 @@ impl Qp {
 
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr)
+            ibv_post_recv(self.as_raw(), wrs.as_mut_ptr(), &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::recv_err_explanation)
     }
@@ -388,30 +469,14 @@ impl Qp {
     /// - Every work request must refer to valid memory address.
     /// - `head` must lead a valid chain of work requests of valid length.
     #[inline]
-    pub unsafe fn post_raw_recv(&self, head: &RawRecvWr) -> Result<()> {
+    pub unsafe fn post_raw_recv(&self, head: &RawRecvWr) -> io::Result<()> {
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(
-                self.inner.qp.as_ptr(),
-                &head.1 as *const _ as *mut _,
-                &mut bad_wr,
-            )
+            ibv_post_recv(self.as_raw(), &head.1 as *const _ as *mut _, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::recv_err_explanation)
     }
 
-    /// Explain [`ibv_post_send`] errors, for internal use.
-    fn send_err_explanation(ret: i32) -> Option<&'static str> {
-        match ret {
-            libc::EINVAL => Some("invalid work request"),
-            libc::ENOMEM => {
-                Some("send queue is full, or not enough resources to complete this operation")
-            }
-            libc::EFAULT => Some("invalid QP"),
-            _ => None,
-        }
-    }
-
     /// Post an RDMA send request.
     ///
     /// If `peer` is `None`, this QP is expected to be connected and the send
@@ -421,7 +486,6 @@ impl Qp {
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the send
     /// by some means, for example by polling the send CQ.
-    #[cfg(mlnx4)]
     pub fn send(
         &self,
         local: &[MrSlice],
@@ -430,14 +494,13 @@ impl Qp {
         wr_id: WrId,
         signal: bool,
         inline: bool,
-    ) -> Result<()> {
-        if !signal && self.inner.init_attr.sq_sig_all {
+    ) -> io::Result<()> {
+        if !signal && self.init_attr.sq_sig_all {
             log::warn!("QP configured to signal all sends despite this send ask to not signal");
         }
 
         let mut sgl = build_sgl(local);
-        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
-        wr = ibv_send_wr {
+        let mut wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
             sg_list: if local.is_empty() {
@@ -452,70 +515,16 @@ impl Qp {
             ),
             send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
                 | inline.select_val(ibv_send_flags::IBV_SEND_INLINE.0, 0),
-            imm_data: imm.unwrap_or(0),
-            ..wr
+            ..(unsafe { mem::zeroed() })
         };
+        wr.set_imm(imm.unwrap_or(0));
+
         if let Some(peer) = peer {
             wr.wr.ud = peer.ud();
         }
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
-        };
-        from_c_ret_explained(ret, Self::send_err_explanation)
-    }
-
-    /// Post an RDMA send request.
-    ///
-    /// If `peer` is `None`, this QP is expected to be connected and the send
-    /// will go to the remote end of the connection. Otherwise, this QP is
-    /// expected to be UD and the send will go to the specified peer.
-    ///
-    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
-    /// It is the caller's responsibility to ensure the completion of the send
-    /// by some means, for example by polling the send CQ.
-    #[cfg(mlnx5)]
-    pub fn send(
-        &self,
-        local: &[MrSlice],
-        peer: Option<&QpPeer>,
-        imm: Option<ImmData>,
-        wr_id: WrId,
-        signal: bool,
-        inline: bool,
-    ) -> Result<()> {
-        if !signal && self.inner.init_attr.sq_sig_all {
-            log::warn!("QP configured to signal all sends despite this send ask to not signal");
-        }
-
-        let mut sgl = build_sgl(local);
-        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
-        wr = ibv_send_wr {
-            wr_id,
-            next: ptr::null_mut(),
-            sg_list: if local.is_empty() {
-                ptr::null_mut()
-            } else {
-                sgl.as_mut_ptr()
-            },
-            num_sge: local.len() as i32,
-            opcode: imm.is_none().select_val(
-                ibv_wr_opcode::IBV_WR_SEND,
-                ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
-            ),
-            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
-                | inline.select_val(ibv_send_flags::IBV_SEND_INLINE.0, 0),
-            imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
-                imm_data: imm.unwrap_or(0),
-            },
-            ..wr
-        };
-        if let Some(peer) = peer {
-            wr.wr.ud = peer.ud();
-        }
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
@@ -534,8 +543,8 @@ impl Qp {
         remote: &RemoteMem,
         wr_id: WrId,
         signal: bool,
-    ) -> Result<()> {
-        if !signal && self.inner.init_attr.sq_sig_all {
+    ) -> io::Result<()> {
+        if !signal && self.init_attr.sq_sig_all {
             log::warn!(
                 "QP configured to signal all sends despite this RDMA read ask to not signal"
             );
@@ -561,7 +570,7 @@ impl Qp {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
@@ -572,7 +581,6 @@ impl Qp {
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the write
     /// by some means, for example by polling the send CQ.
-    #[cfg(mlnx4)]
     pub fn write(
         &self,
         local: &[MrSlice],
@@ -580,16 +588,15 @@ impl Qp {
         wr_id: WrId,
         imm: Option<ImmData>,
         signal: bool,
-    ) -> Result<()> {
-        if !signal && self.inner.init_attr.sq_sig_all {
+    ) -> io::Result<()> {
+        if !signal && self.init_attr.sq_sig_all {
             log::warn!(
                 "QP configured to signal all sends despite this RDMA write ask to not signal"
             );
         }
 
         let mut sgl = build_sgl(local);
-        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
-        wr = ibv_send_wr {
+        let mut wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
             sg_list: if local.is_empty() {
@@ -603,67 +610,16 @@ impl Qp {
                 ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
             ),
             send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
-            imm_data: imm.unwrap_or(0),
             wr: wr_t {
                 rdma: remote.as_rdma_t(),
             },
-            ..wr
+            ..(unsafe { mem::zeroed() })
         };
+        wr.set_imm(imm.unwrap_or(0));
+
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
-        };
-        from_c_ret_explained(ret, Self::send_err_explanation)
-    }
-
-    /// Post an RDMA write request.
-    /// Only valid for RC QPs.
-    ///
-    /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
-    /// It is the caller's responsibility to ensure the completion of the write
-    /// by some means, for example by polling the send CQ.
-    #[cfg(mlnx5)]
-    pub fn write(
-        &self,
-        local: &[MrSlice],
-        remote: &RemoteMem,
-        wr_id: WrId,
-        imm: Option<ImmData>,
-        signal: bool,
-    ) -> Result<()> {
-        if !signal && self.inner.init_attr.sq_sig_all {
-            log::warn!(
-                "QP configured to signal all sends despite this RDMA write ask to not signal"
-            );
-        }
-
-        let mut sgl = build_sgl(local);
-        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
-        wr = ibv_send_wr {
-            wr_id,
-            next: ptr::null_mut(),
-            sg_list: if local.is_empty() {
-                ptr::null_mut()
-            } else {
-                sgl.as_mut_ptr()
-            },
-            num_sge: local.len() as i32,
-            opcode: imm.is_none().select_val(
-                ibv_wr_opcode::IBV_WR_RDMA_WRITE,
-                ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
-            ),
-            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
-            imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t {
-                imm_data: imm.unwrap_or(0),
-            },
-            wr: wr_t {
-                rdma: remote.as_rdma_t(),
-            },
-            ..wr
-        };
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
@@ -683,25 +639,31 @@ impl Qp {
         new: u64,
         wr_id: WrId,
         signal: bool,
-    ) -> Result<()> {
-        if !signal && self.inner.init_attr.sq_sig_all {
+    ) -> io::Result<()> {
+        if !signal && self.init_attr.sq_sig_all {
             log::warn!("QP configured to signal all sends despite this RDMA CAS ask to not signal");
         }
 
         if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
-            return Err(anyhow::anyhow!(
-                "expected 8B buffers for compare-and-swap, got ({}, {})",
-                local.len(),
-                remote.len
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                format!(
+                    "expected 8B buffers for compare-and-swap, got ({}, {})",
+                    local.len(),
+                    remote.len
+                ),
             ));
         }
         if (local.addr() as u64) % (mem::align_of::<u64>() as u64) != 0
             || remote.addr % (mem::align_of::<u64>() as u64) != 0
         {
-            return Err(anyhow::anyhow!(
-                "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
-                local.addr(),
-                remote.addr as *const u8
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                format!(
+                    "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
+                    local.addr(),
+                    remote.addr as *const u8
+                ),
             ));
         }
 
@@ -726,7 +688,7 @@ impl Qp {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
@@ -745,25 +707,31 @@ impl Qp {
         add: u64,
         wr_id: WrId,
         signal: bool,
-    ) -> Result<()> {
-        if !signal && self.inner.init_attr.sq_sig_all {
+    ) -> io::Result<()> {
+        if !signal && self.init_attr.sq_sig_all {
             log::warn!("QP configured to signal all sends despite this RDMA FAA ask to not signal");
         }
 
         if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
-            return Err(anyhow::anyhow!(
-                "expected 8B buffers for fetch-add, got ({}, {})",
-                local.len(),
-                remote.len
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                format!(
+                    "expected 8B buffers for compare-and-swap, got ({}, {})",
+                    local.len(),
+                    remote.len
+                ),
             ));
         }
         if (local.addr() as u64) % (mem::align_of::<u64>() as u64) != 0
             || remote.addr % (mem::align_of::<u64>() as u64) != 0
         {
-            return Err(anyhow::anyhow!(
-                "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
-                local.addr(),
-                remote.addr as *const u8
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                format!(
+                    "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
+                    local.addr(),
+                    remote.addr as *const u8
+                ),
             ));
         }
 
@@ -788,7 +756,7 @@ impl Qp {
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.inner.qp.as_ptr(), &mut wr, &mut bad_wr)
+            ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
@@ -796,12 +764,12 @@ impl Qp {
     /// Post a list of send work requests to the queue pair in order.
     /// This enables doorbell batching and can reduce doorbell ringing overheads.
     #[inline]
-    pub fn post_send(&self, ops: &[SendWr<'_>]) -> Result<()> {
+    pub fn post_send(&self, ops: &[SendWr<'_>]) -> io::Result<()> {
         if ops.is_empty() {
             return Ok(());
         }
 
-        if ops.iter().any(|wr| !wr.is_signaled()) && self.inner.init_attr.sq_sig_all {
+        if ops.iter().any(|wr| !wr.is_signaled()) && self.init_attr.sq_sig_all {
             log::warn!(
                 "QP configured to signal all sends despite some work requests ask to not signal"
             );
@@ -818,17 +786,8 @@ impl Qp {
         }
 
         let mut bad_wr = ptr::null_mut();
-        let ret = unsafe { ibv_post_send(self.inner.qp.as_ptr(), wrs.as_mut_ptr(), &mut bad_wr) };
-        from_c_ret_explained(ret, Self::send_err_explanation).with_context(|| {
-            let failed = wrs
-                .iter()
-                .enumerate()
-                .find(|(_, wr)| (*wr) as *const _ == bad_wr);
-            match failed {
-                Some((i, _)) => format!("failed at send work request #{}", i),
-                None => "failed at unknown send work request".to_string(),
-            }
-        })
+        let ret = unsafe { ibv_post_send(self.as_raw(), wrs.as_mut_ptr(), &mut bad_wr) };
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
     /// Post a list of raw send work requests.
@@ -839,14 +798,10 @@ impl Qp {
     /// - Every work request must refer to valid memory address.
     /// - `head` must lead a valid chain of work requests of valid length.
     #[inline]
-    pub unsafe fn post_raw_send(&self, head: &RawSendWr) -> Result<()> {
+    pub unsafe fn post_raw_send(&self, head: &RawSendWr) -> io::Result<()> {
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
-            ibv_post_send(
-                self.inner.qp.as_ptr(),
-                &head as *const _ as *mut _,
-                &mut bad_wr,
-            )
+            ibv_post_send(self.as_raw(), &head as *const _ as *mut _, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }

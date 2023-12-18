@@ -1,43 +1,35 @@
-use std::io::prelude::*;
+use std::io::{self, Read, Write};
+use std::mem;
 use std::net::*;
 use std::time::Duration;
 
-use crate::rdma::{qp::*, remote_mem::*};
-use anyhow::{Context as _, Result};
+use crate::rdma::{mr::*, qp::*};
 
-fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> Result<()> {
-    stream
-        .write(&buf.len().to_le_bytes())
-        .with_context(|| "failed to write message length")?;
+fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> io::Result<()> {
+    stream.write(&buf.len().to_le_bytes())?;
 
     let mut written = 0;
     while written < buf.len() {
-        let len = stream
-            .write(&buf[written..])
-            .with_context(|| format!("failed when writing bytes [{}..]", written))?;
+        let len = stream.write(&buf[written..])?;
         written += len;
     }
     Ok(())
 }
 
-fn stream_read(stream: &mut &TcpStream) -> Result<Vec<u8>> {
-    let mut buf = [0; std::mem::size_of::<usize>()];
-    stream
-        .read_exact(&mut buf)
-        .with_context(|| "failed to read message length")?;
+fn stream_read(stream: &mut &TcpStream) -> io::Result<Vec<u8>> {
+    let mut buf = [0; mem::size_of::<usize>()];
+    stream.read_exact(&mut buf)?;
     let len = usize::from_le_bytes(buf);
 
     let mut buf = vec![0; len];
-    stream
-        .read_exact(&mut buf)
-        .with_context(|| "failed when reading bytes")?;
+    stream.read_exact(&mut buf)?;
     Ok(buf)
 }
 
 fn connect_until_success(
     server_addr: SocketAddrV4,
     wait_on_failure: Duration,
-) -> Result<TcpStream, std::io::Error> {
+) -> io::Result<TcpStream> {
     loop {
         let stream = TcpStream::connect(server_addr);
         if stream.is_ok() {
@@ -59,11 +51,20 @@ pub struct Connecter {
 
 impl Connecter {
     /// Locally connect two QPs, without involving any networking.
-    pub fn connect_local(first: &Qp, second: &Qp) -> Result<()> {
-        let ep_first = first.endpoint();
-        let ep_second = second.endpoint();
-
-        first.connect(&ep_second).and(second.connect(&ep_first))
+    /// The two QPs must all be already bound to ports.
+    ///
+    /// If error occurs when setting the first QP's peer, the second QP's peer
+    /// will not be set.
+    ///
+    /// # Panics
+    ///
+    /// Panic if any QP is not bound to a local port.
+    pub fn connect_local(first: &mut Qp<'_>, second: &mut Qp<'_>) -> io::Result<()> {
+        let ep_first = first.endpoint().unwrap();
+        let ep_second = second.endpoint().unwrap();
+        first
+            .bind_peer(ep_second)
+            .and_then(|_| second.bind_peer(ep_first))
     }
 
     /// The default TCP port to use.
@@ -74,15 +75,14 @@ impl Connecter {
     ///
     /// If the specified remote peer is `None`, this will be the server side.
     /// Otherwise, this will be the client side and will connect to the remote.
-    pub fn new_on_port(with: Option<Ipv4Addr>, port: u16) -> Result<Self> {
+    pub fn new_on_port(with: Option<Ipv4Addr>, port: u16) -> io::Result<Self> {
         let stream = if let Some(addr) = with.as_ref() {
             let server_addr = SocketAddrV4::new(*addr, port);
-            connect_until_success(server_addr, Duration::from_millis(200))
-                .with_context(|| format!("failed to connect with {}", server_addr))?
+            connect_until_success(server_addr, Duration::from_millis(200))?
         } else {
             let inaddr_any = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
-            let listener = TcpListener::bind(inaddr_any).with_context(|| "failed to listen")?;
-            listener.accept().with_context(|| "failed to accept")?.0
+            let listener = TcpListener::bind(inaddr_any)?;
+            listener.accept()?.0
         };
 
         Ok(Self {
@@ -92,131 +92,51 @@ impl Connecter {
     }
 
     /// Create a new `Connecter` that connects with the specified remote peer.
-    pub fn new(with: Option<Ipv4Addr>) -> Result<Self> {
+    pub fn new(with: Option<Ipv4Addr>) -> io::Result<Self> {
         Self::new_on_port(with, Self::DEFAULT_PORT)
     }
 
     /// Connect a QP with the remote peer.
-    pub fn connect(&self, qp: &Qp) -> Result<Option<QpPeer>> {
-        if self.stream.is_none() {
-            return Err(anyhow::anyhow!("no connection established"));
-        }
-
+    /// The QP must be already bound to a local port.
+    ///
+    /// # Panics
+    ///
+    /// Panic if the QP is not bound to a local port.
+    pub fn connect<'a>(&'a self, qp: &'a mut Qp<'a>) -> io::Result<Option<QpPeer<'a>>> {
         let ep = qp.endpoint();
-        let ep = serde_json::to_string(&ep).with_context(|| "failed to serialize QP info")?;
+        let ep = serde_json::to_string(&ep)?;
 
         let mut stream = self.stream.as_ref().unwrap();
         let ep = if self.with.is_some() {
             // First receive
-            let buf =
-                stream_read(&mut stream).with_context(|| "failed to receive remote QP info")?;
-            let peer = serde_json::from_slice::<QpEndpoint>(buf.as_slice())
-                .with_context(|| "failed to decode remote QP info")?;
+            let buf = stream_read(&mut stream)?;
+            let peer = serde_json::from_slice::<QpEndpoint>(buf.as_slice())?;
 
             // Then send
-            stream_write(&mut stream, ep.as_bytes())
-                .with_context(|| "failed to send local QP info to remote")?;
+            stream_write(&mut stream, ep.as_bytes())?;
             peer
         } else {
             // First send
-            stream_write(&mut stream, ep.as_bytes())
-                .with_context(|| "failed to send local QP info to remote")?;
+            stream_write(&mut stream, ep.as_bytes())?;
 
             // Then receive
-            let buf =
-                stream_read(&mut stream).with_context(|| "failed to receive remote QP info")?;
-            serde_json::from_slice::<QpEndpoint>(buf.as_slice())
-                .with_context(|| "failed to decode remote QP info")?
+            let buf = stream_read(&mut stream)?;
+            serde_json::from_slice::<QpEndpoint>(buf.as_slice())?
         };
 
-        qp.connect(&ep)?;
         if qp.qp_type() == QpType::Rc {
+            qp.bind_peer(ep)?;
             Ok(None)
         } else {
-            QpPeer::new(qp.pd(), ep).map(Some)
+            QpPeer::new(qp.pd(), qp.port().unwrap().1, ep).map(Some)
         }
-    }
-
-    /// Connect a list of QPs with the remote peer.
-    ///
-    /// It is expected that the opponent side calls this method simultaneously
-    /// with a same number of QPs.
-    pub fn connect_many(&self, qps: &[Qp]) -> Result<Vec<Option<QpPeer>>> {
-        if self.stream.is_none() {
-            return Err(anyhow::anyhow!("no connection established"));
-        }
-
-        let ep = qps.iter().map(|qp| qp.endpoint()).collect::<Vec<_>>();
-        let ep = serde_json::to_string(&ep).with_context(|| "failed to serialize QP info vec")?;
-
-        let mut stream = self.stream.as_ref().unwrap();
-        let eps = if self.with.is_some() {
-            // First receive
-            let buf = stream_read(&mut stream)
-                .with_context(|| "failed to receive remote QP info vec from")?;
-            let peer =
-                serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice()).with_context(|| {
-                    format!(
-                        "failed to decode remote QP info vec (from: {})",
-                        String::from_utf8_lossy(&buf)
-                    )
-                })?;
-
-            // Then send
-            stream_write(&mut stream, ep.as_bytes())
-                .with_context(|| "failed to send local QP info vec to remote")?;
-            peer
-        } else {
-            // First send
-            stream_write(&mut stream, ep.as_bytes())
-                .with_context(|| "failed to send local QP info vec to remote")?;
-
-            // Then receive
-            let buf =
-                stream_read(&mut stream).with_context(|| "failed to receive remote QP info vec")?;
-            serde_json::from_slice::<Vec<QpEndpoint>>(buf.as_slice()).with_context(|| {
-                format!(
-                    "failed to decode remote QP info vec (from: {})",
-                    String::from_utf8_lossy(&buf)
-                )
-            })?
-        };
-
-        // Remote side must have the same number of QPs
-        if eps.len() != qps.len() {
-            return Err(anyhow::anyhow!(
-                "QP number mismatch: local {} ({:?}) vs remote {} ({:?})",
-                qps.len(),
-                ep,
-                eps.len(),
-                eps
-            ));
-        }
-
-        let peers = eps
-            .into_iter()
-            .zip(qps)
-            .map(|(ep, qp)| {
-                qp.connect(&ep).unwrap();
-                if qp.qp_type() == QpType::Rc {
-                    None
-                } else {
-                    Some(QpPeer::new(qp.pd(), ep).unwrap())
-                }
-            })
-            .collect::<Vec<_>>();
-        Ok(peers)
     }
 
     /// Send a local MR's information to the remote side.
     ///
     /// This method accepts a `MrSlice` instead of a `Mr` to let the sender
     /// control what part of the MR to send.
-    pub fn send_mr(&self, slice: RemoteMem) -> Result<()> {
-        if self.stream.is_none() {
-            return Err(anyhow::anyhow!("no connection established"));
-        }
-
+    pub fn send_mr(&self, slice: RemoteMem) -> io::Result<()> {
         let mr = serde_json::to_string(&slice)?;
         let mut stream = self.stream.as_ref().unwrap();
         stream_write(&mut stream, mr.as_bytes())?;
@@ -225,11 +145,7 @@ impl Connecter {
     }
 
     /// Receive sent MR information from the opponent's side.
-    pub fn recv_mr(&self) -> Result<RemoteMem> {
-        if self.stream.is_none() {
-            return Err(anyhow::anyhow!("no connection established"));
-        }
-
+    pub fn recv_mr(&self) -> io::Result<RemoteMem> {
         let mut stream = self.stream.as_ref().unwrap();
         let buf = stream_read(&mut stream)?;
         let mr = serde_json::from_slice::<RemoteMem>(buf.as_slice())?;

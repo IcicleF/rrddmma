@@ -1,75 +1,68 @@
-use std::io;
+use std::io::{self, Error as IoError};
 use std::ptr::NonNull;
-use std::sync::Arc;
 
 use super::context::Context;
-use super::mr::Mr;
-use super::qp::{Qp, QpInitAttr};
-
 use crate::bindings::*;
-use anyhow::{Context as _, Result};
+use crate::utils::interop::from_c_ret;
 
-#[allow(dead_code)]
-#[derive(Debug)]
-struct PdInner {
-    ctx: Context,
-    pd: NonNull<ibv_pd>,
-}
+/// Wrapper for `*mut ibv_pd`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub(crate) struct IbvPd(NonNull<ibv_pd>);
 
-unsafe impl Send for PdInner {}
-unsafe impl Sync for PdInner {}
-
-impl Drop for PdInner {
-    fn drop(&mut self) {
+impl IbvPd {
+    /// Deallocate the PD.
+    ///
+    /// # Safety
+    ///
+    /// - A PD must not be deallocated more than once.
+    /// - Deallocated PDs must not be used anymore.
+    pub unsafe fn dealloc(self) -> io::Result<()> {
         // SAFETY: FFI.
-        unsafe { ibv_dealloc_pd(self.pd.as_ptr()) };
+        let ret = ibv_dealloc_pd(self.as_ptr());
+        from_c_ret(ret)
     }
 }
 
+impl_ibv_wrapper_traits!(ibv_pd, IbvPd);
+
 /// Protection domain.
 ///
-/// This type is a simple wrapper of an `Arc` and is guaranteed to have the
-/// same memory layout with it.
-#[derive(Debug, Clone)]
-#[repr(transparent)]
-pub struct Pd {
-    inner: Arc<PdInner>,
+/// **Subtyping:** [`Pd<'a>`] is *covariant* over `'a`.
+pub struct Pd<'a> {
+    ctx: &'a Context,
+    pd: IbvPd,
 }
 
-impl Pd {
+impl<'a> Pd<'a> {
     /// Allocate a protection domain for the given RDMA device context.
-    pub fn new(ctx: Context) -> Result<Self> {
+    pub fn new(ctx: &'a Context) -> io::Result<Self> {
         // SAFETY: FFI
-        let pd = NonNull::new(unsafe { ibv_alloc_pd(ctx.as_raw()) })
-            .ok_or_else(|| anyhow::anyhow!(io::Error::last_os_error()))
-            .with_context(|| "failed to create protection domain")?;
+        let pd = unsafe { ibv_alloc_pd(ctx.as_raw()) };
+        let pd = NonNull::new(pd).ok_or_else(IoError::last_os_error)?;
 
         Ok(Self {
-            inner: Arc::new(PdInner { ctx, pd }),
+            ctx,
+            pd: IbvPd::from(pd),
         })
     }
 
     /// Get the underlying `ibv_pd` structure.
     #[inline]
     pub fn as_raw(&self) -> *mut ibv_pd {
-        self.inner.pd.as_ptr()
+        self.pd.as_ptr()
     }
 
     /// Get the underlying `Context`.
     #[inline]
-    pub fn context(&self) -> &Context {
-        &self.inner.ctx
+    pub fn context(&self) -> &'a Context {
+        self.ctx
     }
+}
 
-    /// Register a memory region on this protection domain.
-    pub fn reg_mr<'mem>(&self, buf: &'mem [u8]) -> Result<Mr<'mem>> {
-        // SAFETY: this call simply decouples the reference to a long pointer
-        // into an address, a length, and a lifetime.
-        unsafe { Mr::reg_with_ref(self.clone(), buf.as_ptr() as *mut u8, buf.len(), buf) }
-    }
-
-    /// Create a queue pair on this protection domain.
-    pub fn create_qp(&self, init_attr: QpInitAttr) -> Result<Qp> {
-        Qp::new(self.clone(), init_attr)
+impl Drop for Pd<'_> {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.pd.dealloc() }.expect("cannot dealloc PD on drop");
     }
 }

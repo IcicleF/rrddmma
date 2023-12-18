@@ -5,7 +5,7 @@ pub mod context;
 pub mod cq;
 
 // RDMA devices and device lists.
-pub mod device;
+pub mod nic;
 
 // RDMA device GIDs.
 pub mod gid;
@@ -18,9 +18,6 @@ pub mod pd;
 
 // RDMA queue pairs.
 pub mod qp;
-
-// Remote RDMA memory regions and slices.
-pub mod remote_mem;
 
 // RDMA work requests.
 pub mod wr;

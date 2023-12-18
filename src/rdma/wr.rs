@@ -5,7 +5,6 @@ use crate::bindings::*;
 
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
-use super::remote_mem::*;
 use super::types::*;
 
 use crate::utils::select::Select;
@@ -66,7 +65,7 @@ pub enum SendWrDetails<'a> {
     /// Send via UD QP.
     SendUd {
         /// Information of the receiver.
-        peer: &'a QpPeer,
+        peer: &'a QpPeer<'a>,
         /// [`Some`] to send with an immediate value, or [`None`] to send without.
         imm: Option<ImmData>,
         /// Indicate whether to inline the send.
@@ -187,7 +186,6 @@ impl<'a> SendWr<'a> {
         wr.next = ptr::null_mut();
 
         // Fill in work request details
-        #[cfg(mlnx4)]
         fn fill_opcode_with_imm(
             wr: &mut ibv_send_wr,
             imm: &Option<u32>,
@@ -196,23 +194,7 @@ impl<'a> SendWr<'a> {
         ) {
             if let Some(imm) = imm {
                 wr.opcode = op_with_imm;
-                wr.imm_data = *imm;
-            } else {
-                wr.opcode = op;
-            }
-        }
-
-        #[cfg(mlnx5)]
-        fn fill_opcode_with_imm(
-            wr: &mut ibv_send_wr,
-            imm: &Option<u32>,
-            op: ibv_wr_opcode::Type,
-            op_with_imm: ibv_wr_opcode::Type,
-        ) {
-            if let Some(imm) = imm {
-                wr.opcode = op_with_imm;
-                wr.imm_data_invalidated_rkey_union =
-                    imm_data_invalidated_rkey_union_t { imm_data: *imm };
+                wr.set_imm(*imm);
             } else {
                 wr.opcode = op;
             }

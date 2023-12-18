@@ -1,5 +1,5 @@
-/// Provide interoperability with C return values.
-pub(crate) mod interop;
+#![macro_use]
 
-/// Provide a `select` method for [`bool`], integer primitives, [`Option`], and [`Result`].
+pub(crate) mod boilerplate;
+pub(crate) mod interop;
 pub(crate) mod select;

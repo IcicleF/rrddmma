@@ -4,6 +4,9 @@ pub type PortNum = u8;
 /// Local identifier (LID) is a [`u16`] that identifies a port on a switch or an HCA in the cluster.
 pub type Lid = u16;
 
+/// Global identifier (GID) index is a [`u8`] that identifies a GID on a port.
+pub type GidIndex = u8;
+
 /// QP number (QPN) is a [`u32`] that identifies a local queue pair.
 pub type Qpn = u32;
 

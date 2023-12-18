@@ -55,6 +55,14 @@ pub struct ibv_wc {
     pub dlid_path_bits: u8,
 }
 
+impl ibv_wc {
+    /// Get the immediate data.
+    #[inline(always)]
+    pub fn imm(&self) -> u32 {
+        self.imm_data
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ibv_global_route {
@@ -163,6 +171,14 @@ pub struct ibv_send_wr {
     pub bind_mw: mw_rkey_bind_info_union_t,
 }
 
+impl ibv_send_wr {
+    /// Set the immediate data.
+    #[inline(always)]
+    pub fn set_imm(&mut self, imm: u32) {
+        self.imm_data = imm;
+    }
+}
+
 // ibv_flow_spec related union and struct types
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -267,7 +283,7 @@ pub unsafe fn ibv_destroy_flow(flow_id: *mut ibv_flow) -> ::std::os::raw::c_int 
     }
 }
 
-/// ibv_open_xrcd - Open an extended connection domain
+/// Open an extended connection domain.
 #[inline]
 pub unsafe fn ibv_open_xrcd(
     context: *mut ibv_context,
@@ -282,14 +298,14 @@ pub unsafe fn ibv_open_xrcd(
     }
 }
 
-/// ibv_close_xrcd - Close an extended connection domain
+/// Close an extended connection domain.
 #[inline]
 pub unsafe fn ibv_close_xrcd(xrcd: *mut ibv_xrcd) -> ::std::os::raw::c_int {
     let vctx = verbs_get_ctx((*xrcd).context);
     (*vctx).close_xrcd.unwrap()(xrcd)
 }
 
-/// ibv_alloc_mw - Allocate a memory window
+/// Allocate a memory window.
 #[inline]
 pub unsafe fn ibv_alloc_mw(pd: *mut ibv_pd, type_: ibv_mw_type::Type) -> *mut ibv_mw {
     if let Some(alloc_mw) = (*(*pd).context).ops.alloc_mw {
@@ -300,13 +316,13 @@ pub unsafe fn ibv_alloc_mw(pd: *mut ibv_pd, type_: ibv_mw_type::Type) -> *mut ib
     }
 }
 
-/// ibv_dealloc_mw - Free a memory window
+/// Free a memory window.
 #[inline]
 pub unsafe fn ibv_dealloc_mw(mw: *mut ibv_mw) -> ::std::os::raw::c_int {
     (*(*mw).context).ops.dealloc_mw.unwrap()(mw)
 }
 
-/// ibv_inc_rkey - Increment the 8 lsb in the given rkey
+/// Increment the 8 lsb in the given rkey.
 #[inline]
 pub fn ibv_inc_rkey(rkey: u32) -> u32 {
     const MASK: u32 = 0x000000FF;
@@ -315,7 +331,7 @@ pub fn ibv_inc_rkey(rkey: u32) -> u32 {
     (rkey & !MASK) | newtag as u32
 }
 
-/// ibv_bind_mw - Bind a memory window to a region
+/// Bind a memory window to a region.
 #[inline]
 pub unsafe fn ibv_bind_mw(
     qp: *mut ibv_qp,
@@ -329,11 +345,11 @@ pub unsafe fn ibv_bind_mw(
     }
 }
 
-/// ibv_poll_cq - Poll a CQ for work completions
+/// Poll a CQ for work completions.
 ///
-/// Poll a CQ for (possibly multiple) completions.  If the return value
-/// is < 0, an error occurred.  If the return value is >= 0, it is the
-/// number of completions returned.  If the return value is
+/// Poll a CQ for (possibly multiple) completions. If the return value
+/// is < 0, an error occurred. If the return value is >= 0, it is the
+/// number of completions returned. If the return value is
 /// non-negative and strictly less than num_entries, then the CQ was
 /// emptied.
 ///
@@ -352,7 +368,7 @@ pub unsafe fn ibv_poll_cq(
     (*(*cq).context).ops.poll_cq.unwrap()(cq, num_entries, wc)
 }
 
-/// ibv_post_send - Post a list of work requests to a send queue.
+/// Post a list of work requests to a send queue.
 ///
 /// If IBV_SEND_INLINE flag is set, the data buffers can be reused
 /// immediately after the call returns.
@@ -365,7 +381,7 @@ pub unsafe fn ibv_post_send(
     (*(*qp).context).ops.post_send.unwrap()(qp, wr, bad_wr)
 }
 
-/// ibv_post_recv - Post a list of work requests to a receive queue.
+/// Post a list of work requests to a receive queue.
 #[inline]
 pub unsafe fn ibv_post_recv(
     qp: *mut ibv_qp,
@@ -373,4 +389,93 @@ pub unsafe fn ibv_post_recv(
     bad_wr: *mut *mut ibv_recv_wr,
 ) -> ::std::os::raw::c_int {
     (*(*qp).context).ops.post_recv.unwrap()(qp, wr, bad_wr)
+}
+
+#[inline]
+unsafe fn verbs_get_exp_ctx(ctx: *const ibv_context) -> *mut verbs_context_exp {
+    let app_ex_ctx = verbs_get_ctx(ctx);
+    if app_ex_ctx.is_null()
+        || (*app_ex_ctx).has_comp_mask & verbs_context_mask::VERBS_CONTEXT_EXP.0 == 0
+    {
+        std::ptr::null_mut()
+    } else {
+        let actual_ex_ctx =
+            ((ctx as usize) - ((*app_ex_ctx).sz - std::mem::size_of::<ibv_context>())) as *mut u8;
+        (actual_ex_ctx as usize - std::mem::size_of::<verbs_context_exp>()) as *mut _
+    }
+}
+
+macro_rules! IBV_EXP_RET_ON_INVALID_COMP_MASK_compat {
+    ($val:expr, $valid_mask:expr, $ret:expr, $func:expr) => {{
+        if (($val) > ($valid_mask)) {
+            let __val: ::std::os::raw::c_ulonglong = ($val) as _;
+            let __valid_mask: ::std::os::raw::c_ulonglong = ($valid_mask) as _;
+
+            // NOTE: since we cannot easily acquire `stderr: *mut FILE`, we use `eprintln!` instead.
+            // Compatibility issues may occur, but since this is debug info it should be fine.
+            eprintln!(
+                "{}: invalid comp_mask !!! (comp_mask = 0x{:x} valid_mask = 0x{:x})\n",
+                $func, __val, __valid_mask,
+            );
+            *(::libc::__errno_location()) = ::libc::EINVAL;
+            return $ret;
+        }
+    }};
+}
+
+#[allow(unused)]
+macro_rules! IBV_EXP_RET_NULL_ON_INVALID_COMP_MASK_compat {
+    ($val:expr, $valid_mask:expr, $func:expr) => {
+        IBV_EXP_RET_ON_INVALID_COMP_MASK_compat!($val, $valid_mask, ::std::ptr::null_mut(), $func,)
+    };
+}
+
+#[allow(unused)]
+macro_rules! IBV_EXP_RET_EINVAL_ON_INVALID_COMP_MASK_compat {
+    ($val:expr, $valid_mask:expr, $func:expr) => {
+        IBV_EXP_RET_ON_INVALID_COMP_MASK_compat!($val, $valid_mask, ::libc::EINVAL, $func)
+    };
+}
+
+#[allow(unused)]
+macro_rules! IBV_EXP_RET_ZERO_ON_INVALID_COMP_MASK_compat {
+    ($val:expr, $valid_mask:expr, $func:expr) => {
+        IBV_EXP_RET_ON_INVALID_COMP_MASK_compat!($val, $valid_mask, 0, $func)
+    };
+}
+
+macro_rules! verbs_get_exp_ctx_op {
+    ($ctx:expr, $op:ident) => {{
+        let vctx = verbs_get_exp_ctx($ctx);
+        if vctx.is_null()
+            || (*vctx).sz
+                < ::std::mem::size_of_val(&*vctx) - memoffset::offset_of!(verbs_context_exp, $op)
+            || (*vctx).$op.is_none()
+        {
+            std::ptr::null_mut()
+        } else {
+            vctx
+        }
+    }};
+}
+
+/// Query GID attributes.
+#[inline]
+pub unsafe fn ibv_exp_query_gid_attr(
+    context: *mut ibv_context,
+    port_num: u8,
+    index: ::std::os::raw::c_uint,
+    attr: *mut ibv_exp_gid_attr,
+) -> ::std::os::raw::c_int {
+    let vctx = verbs_get_exp_ctx_op!(context, exp_query_gid_attr);
+    if vctx.is_null() {
+        ENOSYS
+    } else {
+        IBV_EXP_RET_EINVAL_ON_INVALID_COMP_MASK_compat!(
+            (*attr).comp_mask,
+            IBV_EXP_QUERY_GID_ATTR_RESERVED - 1,
+            "ibv_exp_query_gid_attr"
+        );
+        (*vctx).exp_query_gid_attr.unwrap()(context, port_num, index, attr)
+    }
 }
