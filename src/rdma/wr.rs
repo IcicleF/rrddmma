@@ -5,7 +5,7 @@ use crate::bindings::*;
 
 use super::mr::*;
 use super::qp::{build_sgl, QpPeer};
-use super::types::*;
+use super::type_alias::*;
 
 use crate::utils::select::Select;
 
@@ -75,13 +75,13 @@ pub enum SendWrDetails<'a> {
     /// Read.
     Read {
         /// The remote memory area to read from.
-        src: RemoteMem,
+        src: MrRemote,
     },
 
     /// Write.
     Write {
         /// The remote memory area to write to.
-        dst: RemoteMem,
+        dst: MrRemote,
         /// [`Some`] to write with an immediate value, or [`None`] to write without.
         imm: Option<ImmData>,
     },
@@ -90,7 +90,7 @@ pub enum SendWrDetails<'a> {
     CompareSwap {
         /// The remote memory area to operate on.
         /// This must be an aligned 8B memory area.
-        dst: RemoteMem,
+        dst: MrRemote,
         /// The value to compare against.
         current: u64,
         /// The value to swap with.
@@ -101,7 +101,7 @@ pub enum SendWrDetails<'a> {
     FetchAdd {
         /// The remote memory area to operate on.
         /// This must be an aligned 8B memory area.
-        dst: RemoteMem,
+        dst: MrRemote,
         /// The value to add.
         add: u64,
     },

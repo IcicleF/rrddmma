@@ -291,16 +291,16 @@ impl Default for NicFinder {
 /// NIC probe result error type.
 #[derive(Debug, Error)]
 pub enum NicProbeError {
-    /// **I/O error:** `libibverbs` interfaces returned an error
-    /// when opening or querying the device.
+    /// `libibverbs` interfaces returned an error when opening or querying
+    /// the device.
     #[error("I/O error from ibverbs")]
     IoError(#[from] IoError),
 
-    /// **Port query error:** port query failed.
+    /// Failed to query port attributes.
     #[error("port query error")]
     PortQueryError(#[from] PortQueryError),
 
-    /// **Not found:** no eligible RDMA device found.
+    /// No eligible RDMA device found.
     #[error("no eligible RDMA device found")]
     NotFound,
 }

@@ -30,6 +30,7 @@ impl From<Permission> for i32 {
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Add for Permission {
     type Output = Self;
 
@@ -38,6 +39,7 @@ impl Add for Permission {
     }
 }
 
+#[allow(clippy::suspicious_op_assign_impl)]
 impl AddAssign for Permission {
     fn add_assign(&mut self, rhs: Self) {
         self.0 |= rhs.0;
@@ -54,7 +56,7 @@ impl Sub for Permission {
 
 impl SubAssign for Permission {
     fn sub_assign(&mut self, rhs: Self) {
-        self.0 .0 = self.0 .0 & !rhs.0 .0;
+        self.0 .0 &= !rhs.0 .0;
     }
 }
 
@@ -72,6 +74,7 @@ impl BitAndAssign for Permission {
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl BitOr for Permission {
     type Output = Self;
 
@@ -80,6 +83,7 @@ impl BitOr for Permission {
     }
 }
 
+#[allow(clippy::suspicious_op_assign_impl)]
 impl BitOrAssign for Permission {
     fn bitor_assign(&mut self, rhs: Self) {
         *self += rhs;

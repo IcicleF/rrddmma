@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::rdma::{mr::*, qp::*};
 
 fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> io::Result<()> {
-    stream.write(&buf.len().to_le_bytes())?;
+    stream.write_all(&buf.len().to_le_bytes())?;
 
     let mut written = 0;
     while written < buf.len() {
@@ -140,7 +140,7 @@ impl Connecter {
     ///
     /// This method accepts a `MrSlice` instead of a `Mr` to let the sender
     /// control what part of the MR to send.
-    pub fn send_mr(&self, slice: RemoteMem) -> io::Result<()> {
+    pub fn send_mr(&self, slice: MrRemote) -> io::Result<()> {
         let mr = serde_json::to_string(&slice)?;
         let mut stream = self.stream.as_ref().unwrap();
         stream_write(&mut stream, mr.as_bytes())?;
@@ -149,10 +149,10 @@ impl Connecter {
     }
 
     /// Receive sent MR information from the opponent's side.
-    pub fn recv_mr(&self) -> io::Result<RemoteMem> {
+    pub fn recv_mr(&self) -> io::Result<MrRemote> {
         let mut stream = self.stream.as_ref().unwrap();
         let buf = stream_read(&mut stream)?;
-        let mr = serde_json::from_slice::<RemoteMem>(buf.as_slice())?;
+        let mr = serde_json::from_slice::<MrRemote>(buf.as_slice())?;
         Ok(mr)
     }
 }

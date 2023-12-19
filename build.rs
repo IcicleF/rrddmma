@@ -26,7 +26,7 @@ fn link_mlnx_ofed() -> Result<IbverbsLinkage, ()> {
         .output()
         .map_err(|_| ())?;
 
-    let ver_num = output.stdout.get(0).ok_or(())?;
+    let ver_num = output.stdout.first().ok_or(())?;
     match *ver_num {
         b'4' => {
             // MLNX_OFED v4.9-x LTS will not register the `libibverbs` library to

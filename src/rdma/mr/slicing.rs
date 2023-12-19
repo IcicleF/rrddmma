@@ -29,6 +29,7 @@ fn clip_range(r: impl RangeBounds<usize>, upper: usize) -> Range<usize> {
 ///
 /// Safe methods of this trait rely on these contracts to be upheld.
 #[allow(private_bounds)]
+#[allow(clippy::len_without_is_empty)]
 pub unsafe trait Slicing<'s>: Sealed {
     type Output: 's;
 
@@ -103,5 +104,5 @@ trait Sealed {}
 
 impl Sealed for Mr {}
 impl Sealed for MrSlice<'_> {}
-impl Sealed for RemoteMem {}
+impl Sealed for MrRemote {}
 impl Sealed for crate::wrap::RegisteredMem {}

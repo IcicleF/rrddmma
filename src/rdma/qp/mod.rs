@@ -15,7 +15,7 @@ pub use self::peer::*;
 pub use self::state::*;
 pub use self::ty::*;
 use crate::bindings::*;
-use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, types::*, wr::*};
+use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, type_alias::*, wr::*};
 use crate::utils::{interop::*, select::*};
 
 /// Wrapper for `*mut ibv_qp`.
@@ -69,11 +69,11 @@ impl_ibv_wrapper_traits!(ibv_qp, IbvQp);
 /// Queue pair creation error type.
 #[derive(Debug, Error)]
 pub enum QpCreationError {
-    /// **I/O error:** `libibverbs` interfaces returned an error.
+    /// `libibverbs` interfaces returned an error.
     #[error("I/O error from ibverbs")]
     IoError(#[from] io::Error),
 
-    /// **Capability error:** specified capabilities are not supported.
+    /// Specified capabilities are not supported by the device.
     #[error("capability not enough: {0} supports up to {1}, {2} required")]
     CapabilityNotEnough(String, u32, u32),
 }
@@ -563,7 +563,7 @@ impl Qp {
     pub fn read(
         &self,
         local: &[MrSlice],
-        remote: &RemoteMem,
+        remote: &MrRemote,
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
@@ -601,7 +601,7 @@ impl Qp {
     pub fn write(
         &self,
         local: &[MrSlice],
-        remote: &RemoteMem,
+        remote: &MrRemote,
         wr_id: WrId,
         imm: Option<ImmData>,
         signal: bool,
@@ -645,7 +645,7 @@ impl Qp {
     pub fn compare_swap(
         &self,
         local: &MrSlice,
-        remote: &RemoteMem,
+        remote: &MrRemote,
         current: u64,
         new: u64,
         wr_id: WrId,
@@ -710,7 +710,7 @@ impl Qp {
     pub fn fetch_add(
         &self,
         local: &MrSlice,
-        remote: &RemoteMem,
+        remote: &MrRemote,
         add: u64,
         wr_id: WrId,
         signal: bool,

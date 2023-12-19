@@ -300,12 +300,12 @@ impl Cq {
 /// CQ creation error type.
 #[derive(Debug, Error)]
 pub enum CqCreationError {
-    /// **I/O error:** `libibverbs` interfaces returned an error.
+    ///`libibverbs` interfaces returned an error.
     #[error("I/O error from ibverbs")]
     IoError(#[from] IoError),
 
-    /// **Capacity too large:** the capacity of the CQ is larger than the
-    /// device's maximum allowed capacity, which is contained in the error.
+    /// The capacity of the CQ is larger than the device's maximum allowed
+    /// capacity, which is contained in the error.
     #[error("CQ capacity too large (maximum: {0})")]
     TooManyCqes(u32),
 }

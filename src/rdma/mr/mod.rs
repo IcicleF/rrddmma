@@ -157,8 +157,8 @@ impl Mr {
     /// View this local memory region as a remote memory region for RDMA access
     /// from remote peers.
     #[inline]
-    pub fn as_remote(&self) -> RemoteMem {
-        RemoteMem {
+    pub fn as_remote(&self) -> MrRemote {
+        MrRemote {
             addr: self.addr() as u64,
             len: self.len(),
             rkey: self.rkey(),

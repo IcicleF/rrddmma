@@ -23,4 +23,4 @@ pub mod qp;
 pub mod wr;
 
 // Related types.
-pub mod types;
+pub mod type_alias;

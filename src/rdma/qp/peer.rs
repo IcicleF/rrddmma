@@ -3,7 +3,7 @@ use std::io::{self, Error as IoError};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use crate::rdma::{gid::Gid, pd::Pd, qp::Qp, types::*};
+use crate::rdma::{gid::Gid, pd::Pd, qp::Qp, type_alias::*};
 
 use crate::bindings::*;
 use crate::utils::interop::from_c_ret;

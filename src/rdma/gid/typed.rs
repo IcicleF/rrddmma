@@ -1,4 +1,6 @@
-use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
+use std::io::Error as IoError;
+#[cfg(mlnx5)]
+use std::io::{self, ErrorKind as IoErrorKind};
 use std::mem;
 use std::net::Ipv6Addr;
 
@@ -7,7 +9,7 @@ use thiserror::Error;
 
 use super::raw::Gid;
 use crate::bindings::*;
-use crate::rdma::{context::*, types::*};
+use crate::rdma::{context::*, type_alias::*};
 
 /// GID type.
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
@@ -25,18 +27,16 @@ pub enum GidType {
 /// GID query result error type.
 #[derive(Debug, Error)]
 pub enum GidQueryError {
-    /// **I/O error:** `libibverbs` interfaces returned an error.
+    /// `libibverbs` interfaces returned an error.
     #[error("I/O error from ibverbs")]
     IoError(#[from] IoError),
 
-    /// **Attribute query error:** cannot query the attributes of
-    /// the GID. This usually means that the GID itself does not
-    /// exist in the first place.
+    /// Failed to query the attributes of the GID. This usually means that the
+    /// GID itself does not exist in the first place.
     #[error("attribute query error")]
     AttributeQueryError,
 
-    /// **Unrecognized GID type:** the GID type is not Infiniband,
-    /// RoCEv1, or RoCEv2, and is not recognized by this library.
+    /// The GID type is not Infiniband, RoCEv1, or RoCEv2.
     #[error("unregonized GID type")]
     Unrecognized,
 }

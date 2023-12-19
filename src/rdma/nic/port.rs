@@ -26,12 +26,11 @@ unsafe impl Sync for Port {}
 /// Port query error type.
 #[derive(Debug, Error)]
 pub enum PortQueryError {
-    /// **I/O error:** `libibverbs` interfaces returned an error
-    /// when querying the port.
+    /// `libibverbs` interfaces returned an error when querying the port.
     #[error("ibv_query_port error")]
     IoError(#[from] io::Error),
 
-    /// **GID query error:** GID query failed.
+    /// Failed to query GID attributes.
     #[error("GID query error")]
     GidQueryError(#[from] GidQueryError),
 }
