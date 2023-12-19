@@ -46,6 +46,7 @@ impl Port {
             // SAFETY: FFI.
             let ret = unsafe { ___ibv_query_port(ctx.as_ptr(), num, &mut attr) };
             if ret != 0 {
+                eprintln!("query port error: {}", ret);
                 return Err(io::Error::from_raw_os_error(ret).into());
             }
             attr
@@ -54,8 +55,11 @@ impl Port {
         let num_gids = attr.gid_tbl_len;
         let mut gids = Vec::with_capacity(num_gids as usize);
         for i in 0..num_gids {
-            let gid = GidTyped::query(ctx, num, &attr, i as _)?;
-            gids.push(gid);
+            match GidTyped::query(ctx, num, &attr, i as _) {
+                Ok(gid) => gids.push(gid),
+                Err(GidQueryError::AttributeQueryError) => break,
+                Err(e) => return Err(e.into()),
+            }
         }
 
         Ok(Self { num, attr, gids })

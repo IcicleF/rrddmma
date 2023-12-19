@@ -1,9 +1,6 @@
 use std::fmt;
 use std::net::Ipv6Addr;
 
-#[cfg(mlnx5)]
-use std::hint;
-
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::*;

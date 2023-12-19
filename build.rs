@@ -8,19 +8,19 @@ enum VerbsVersion {
     V5,
 }
 
-struct MlnxOfedLink {
+struct IbverbsLinkage {
     ver: VerbsVersion,
     include_dirs: Vec<String>,
 }
 
-impl MlnxOfedLink {
+impl IbverbsLinkage {
     fn new(ver: VerbsVersion, include_dirs: Vec<String>) -> Self {
         Self { ver, include_dirs }
     }
 }
 
 /// Try to link to existing `MLNX_OFED` installation.
-fn link_mlnx_ofed() -> Result<MlnxOfedLink, ()> {
+fn link_mlnx_ofed() -> Result<IbverbsLinkage, ()> {
     let output = Command::new("ofed_info")
         .arg("-n")
         .output()
@@ -50,29 +50,34 @@ fn link_mlnx_ofed() -> Result<MlnxOfedLink, ()> {
                 } else {
                     Vec::new()
                 };
-                Ok(MlnxOfedLink::new(VerbsVersion::V4, include_dirs))
+                Ok(IbverbsLinkage::new(VerbsVersion::V4, include_dirs))
             } else {
                 Err(())
             }
         }
         b'5' => {
             // MLNX_OFED v5.x LTS will register the `libibverbs` library to `pkg-config`.
-            let lib = pkg_config::Config::new()
-                .atleast_version("1.8.28")
-                .statik(false)
-                .probe("libibverbs")
-                .map_err(|_| ())?;
-
-            Ok(MlnxOfedLink::new(
-                VerbsVersion::V5,
-                lib.include_paths
-                    .iter()
-                    .map(|p| p.to_str().unwrap().to_owned())
-                    .collect(),
-            ))
+            link_ibverbs()
         }
         _ => Err(()),
     }
+}
+
+/// Try to link to existing `libibverbs` installation.
+fn link_ibverbs() -> Result<IbverbsLinkage, ()> {
+    let lib = pkg_config::Config::new()
+        .atleast_version("1.8.28")
+        .statik(false)
+        .probe("libibverbs")
+        .map_err(|_| ())?;
+
+    Ok(IbverbsLinkage::new(
+        VerbsVersion::V5,
+        lib.include_paths
+            .iter()
+            .map(|p| p.to_str().unwrap().to_owned())
+            .collect(),
+    ))
 }
 
 /// Build flow:
@@ -86,9 +91,10 @@ fn main() {
         panic!("`rrddmma` currently only supports 64-bit platforms");
     }
 
+    println!("cargo:rerun-if-changed=src/bindings/verbs.h");
+
     // Respect existing `MLNX_OFED` installation.
     if let Ok(link) = link_mlnx_ofed() {
-        println!("cargo:rerun-if-changed=src/bindings/verbs.h");
         println!("cargo:rerun-if-env-changed=MLNX_OFED_INCLUDE_DIR");
         println!("cargo:rerun-if-env-changed=MLNX_OFED_LIB_DIR");
         gen_verb_bindings(link.ver, link.include_dirs);
@@ -96,7 +102,13 @@ fn main() {
     }
 
     // Respect existing `libibverbs` installation.
-    todo!()
+    if let Ok(link) = link_ibverbs() {
+        gen_verb_bindings(link.ver, link.include_dirs);
+        return;
+    }
+
+    // Build the `ibverbs` library by myself.
+    todo!("build ibverbs");
 }
 
 fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
@@ -118,7 +130,6 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
         .blocklist_type("ibv_gid")
         .blocklist_type("ibv_global_route")
         .blocklist_type("ibv_mw_bind_info")
-        .blocklist_type("ibv_ops_wr")
         .blocklist_type("ibv_send_wr")
         .blocklist_type("ibv_wc")
         .bitfield_enum("ibv_device_cap_flags")
@@ -198,7 +209,10 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
         VerbsVersion::V5 => {
             println!("cargo:rustc-cfg=mlnx5");
 
-            // TODO: RDMA-Core bindings
+            // RDMA-Core bindings
+            builder = builder
+                .blocklist_type("ibv_ops_wr")
+                .blocklist_type("_compat_ibv_port_attr");
         }
     }
 

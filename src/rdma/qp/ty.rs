@@ -34,29 +34,47 @@ pub enum QpType {
     Driver = ibv_qp_type::IBV_QPT_DRIVER as _,
 }
 
+#[cfg(mlnx4)]
 impl QpType {
-    /// Determine whether the QP type is reliable.
-    #[inline]
-    pub const fn is_reliable(self) -> bool {
+    const fn is_reliable_impl(self) -> bool {
         matches!(self, Self::Rc | Self::Xrc | Self::XrcIni | Self::XrcTgt)
     }
 
+    const fn is_target_impl(self) -> bool {
+        !matches!(self, Self::XrcIni | Self::DcIni)
+    }
+}
+
+#[cfg(mlnx5)]
+impl QpType {
+    const fn is_reliable_impl(self) -> bool {
+        matches!(self, Self::Rc | Self::XrcIni | Self::XrcTgt)
+    }
+
+    const fn is_target_impl(self) -> bool {
+        !matches!(self, Self::XrcIni)
+    }
+}
+
+impl QpType {
+    /// Determine whether the QP type is reliable.
+    pub const fn is_reliable(self) -> bool {
+        self.is_reliable_impl()
+    }
+
     /// Determine whether the QP type is datagram.
-    #[inline]
     pub const fn is_connected(self) -> bool {
         !matches!(self, Self::Ud | Self::RawPacket)
     }
 
     /// Determine whether the QP type can be a transmission initiator.
-    #[inline]
     pub const fn is_initiator(self) -> bool {
         !matches!(self, Self::XrcTgt)
     }
 
     /// Determine whether the QP type can be a transmission target.
-    #[inline]
     pub const fn is_target(self) -> bool {
-        !matches!(self, Self::XrcIni | Self::DcIni)
+        self.is_target_impl()
     }
 }
 

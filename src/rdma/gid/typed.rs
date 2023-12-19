@@ -1,4 +1,4 @@
-use std::io::Error as IoError;
+use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::mem;
 use std::net::Ipv6Addr;
 
@@ -28,6 +28,12 @@ pub enum GidQueryError {
     /// **I/O error:** `libibverbs` interfaces returned an error.
     #[error("I/O error from ibverbs")]
     IoError(#[from] IoError),
+
+    /// **Attribute query error:** cannot query the attributes of
+    /// the GID. This usually means that the GID itself does not
+    /// exist in the first place.
+    #[error("attribute query error")]
+    AttributeQueryError,
 
     /// **Unrecognized GID type:** the GID type is not Infiniband,
     /// RoCEv1, or RoCEv2, and is not recognized by this library.
@@ -83,26 +89,54 @@ impl GidTyped {
     fn query_impl(
         ctx: IbvContext,
         port_num: u8,
-        _: &ibv_port_attr,
-        gid_index: i32,
+        port_attr: &ibv_port_attr,
+        gid_index: GidIndex,
     ) -> Result<Self, GidQueryError> {
         // SAFETY: POD type.
-        let mut entry = unsafe { mem::zeroed() };
+        let mut gid = unsafe { mem::zeroed() };
 
         // SAFETY: FFI.
-        let ret = unsafe { ibv_query_gid_ex(ctx.as_ptr(), port_num, gid_index as _, &mut entry) };
+        let ret = unsafe { ibv_query_gid(ctx.as_ptr(), port_num, gid_index as _, &mut gid) };
         if ret != 0 {
-            return Err(io::Error::from_raw_os_error(ret).into());
+            return Err(IoError::from_raw_os_error(ret).into());
         }
 
-        Ok(match attr.gid_type {
-            IBV_GID_TYPE_IB => GidType::Infiniband,
-            IBV_GID_TYPE_ROCE_V1 => GidType::RoceV1,
-            IBV_GID_TYPE_ROCE_V2 => GidType::RoceV2,
+        // Extract GID type from ibsysfs.
+        let gid_is_rocev2 = {
+            use std::fs::File;
+            use std::io::prelude::*;
+            use std::path::{Path, PathBuf};
 
-            // SAFETY: enum constraints of `libibverbs`.
-            _ => unsafe { hint::unreachable_unchecked() },
-        })
+            let path = Path::new("/sys/class/infiniband")
+                .join(ctx.dev().name()?)
+                .join("ports")
+                .join(port_num.to_string())
+                .join("gid_attrs/types")
+                .join(gid_index.to_string());
+            let mut buf = String::new();
+
+            #[inline]
+            fn local_read(path: PathBuf, buf: &mut String) -> io::Result<usize> {
+                File::open(path)?.read_to_string(buf)
+            }
+            if let Err(e) = local_read(path, &mut buf) {
+                return if e.kind() == IoErrorKind::InvalidInput {
+                    Err(GidQueryError::AttributeQueryError)
+                } else {
+                    Err(e.into())
+                };
+            }
+
+            matches!(buf.trim(), "RoCE v2")
+        };
+
+        let ty = match (port_attr.link_layer as i32, gid_is_rocev2) {
+            (IBV_LINK_LAYER_ETHERNET, false) => GidType::RoceV1,
+            (IBV_LINK_LAYER_ETHERNET, true) => GidType::RoceV2,
+            (_, false) => GidType::Infiniband,
+            _ => return Err(GidQueryError::Unrecognized),
+        };
+        Ok(GidTyped::new(Gid(gid), ty))
     }
 }
 
