@@ -3,6 +3,7 @@ mod wc;
 use std::io::{self, Error as IoError};
 use std::mem::{self, MaybeUninit};
 use std::ptr::{self, NonNull};
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -32,18 +33,44 @@ impl IbvCq {
 
 impl_ibv_wrapper_traits!(ibv_cq, IbvCq);
 
-/// Completion queue.
-pub struct Cq<'a> {
-    ctx: &'a Context,
+/// Ownership holder of completion queue.
+struct CqInner {
+    ctx: Context,
     cq: IbvCq,
 }
 
-impl<'a> Cq<'a> {
+impl Drop for CqInner {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.cq.destroy() }.expect("cannot destroy CQ on drop");
+    }
+}
+
+/// Completion queue.
+pub struct Cq {
+    /// CQ body.
+    inner: Arc<CqInner>,
+
+    /// Cached CQ pointer.
+    cq: IbvCq,
+}
+
+impl Cq {
+    /// Make a clone of the `Arc` pointer.
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            cq: self.cq,
+        }
+    }
+}
+
+impl Cq {
     /// The default CQ depth.
     pub const DEFAULT_CQ_DEPTH: u32 = 128;
 
     /// Create a new completion queue.
-    pub fn new(ctx: &'a Context, capacity: u32) -> Result<Cq, CqCreationError> {
+    pub fn new(ctx: &Context, capacity: u32) -> Result<Cq, CqCreationError> {
         let max_capacity = ctx.attr().max_cqe as u32;
         if capacity > max_capacity {
             return Err(CqCreationError::TooManyCqes(max_capacity));
@@ -60,10 +87,14 @@ impl<'a> Cq<'a> {
             )
         };
         let cq = NonNull::new(cq).ok_or_else(IoError::last_os_error)?;
+        let cq = IbvCq(cq);
 
         Ok(Self {
-            ctx,
-            cq: IbvCq::from(cq),
+            inner: Arc::new(CqInner {
+                ctx: ctx.clone(),
+                cq,
+            }),
+            cq,
         })
     }
 
@@ -73,8 +104,8 @@ impl<'a> Cq<'a> {
     }
 
     /// Get the underlying [`Context`].
-    pub fn context(&self) -> &'a Context {
-        &self.ctx
+    pub fn context(&self) -> &Context {
+        &self.inner.ctx
     }
 
     /// Get the capacity of the completion queue.
@@ -263,13 +294,6 @@ impl<'a> Cq<'a> {
             polled = self.poll_one_into(wc)?;
         }
         Ok(())
-    }
-}
-
-impl Drop for Cq<'_> {
-    fn drop(&mut self) {
-        // SAFETY: call only once, and no UAF since I will be dropped.
-        unsafe { self.cq.destroy() }.expect("cannot destroy CQ on drop");
     }
 }
 

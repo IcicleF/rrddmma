@@ -11,20 +11,20 @@ use crate::bindings::*;
 /// **Subtyping:** [`MrSlice<'a>`] is *covariant* over `'a`.
 #[derive(Clone)]
 pub struct MrSlice<'a> {
-    mr: &'a Mr<'a>,
+    mr: &'a Mr,
     offset: usize,
     len: usize,
 }
 
 impl<'a> MrSlice<'a> {
     /// Create a new memory region slice of the given MR, offset, and length.
-    pub(crate) fn new(mr: &'a Mr<'a>, offset: usize, len: usize) -> Self {
+    pub(crate) fn new(mr: &'a Mr, offset: usize, len: usize) -> Self {
         Self { mr, offset, len }
     }
 
     /// Get the underlying `Mr`.
     #[inline]
-    pub fn mr(&self) -> &Mr<'a> {
+    pub fn mr(&self) -> &Mr {
         self.mr
     }
     /// Attempt to resize the memory region slice to the specified length.

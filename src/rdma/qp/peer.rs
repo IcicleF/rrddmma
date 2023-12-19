@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::{self, Error as IoError};
-use std::marker::PhantomData;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use crate::rdma::{gid::Gid, pd::Pd, qp::Qp, types::*};
 
@@ -19,7 +19,7 @@ pub struct QpEndpoint {
 
 impl QpEndpoint {
     /// Create a new endpoint from a queue pair.
-    pub fn new(qp: &Qp<'_>) -> Option<Self> {
+    pub fn new(qp: &Qp) -> Option<Self> {
         let (port, gid_idx) = qp.port()?;
         let gid = port.gids()[*gid_idx as usize];
 
@@ -52,24 +52,43 @@ impl IbvAh {
 
 impl_ibv_wrapper_traits!(ibv_ah, IbvAh);
 
-/// Remote peer information that can be used in sends.
-pub struct QpPeer<'a> {
-    pd: PhantomData<&'a Pd<'a>>,
+/// Ownership holder of address handle.
+struct QpPeerInner {
+    _pd: Pd,
     ah: IbvAh,
     ep: QpEndpoint,
 }
 
-impl fmt::Debug for QpPeer<'_> {
+impl Drop for QpPeerInner {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.ah.destroy() }.expect("cannot destroy AH on drop");
+    }
+}
+
+/// Remote peer information that can be used in sends.
+pub struct QpPeer {
+    /// Peer information body.
+    inner: Arc<QpPeerInner>,
+
+    /// Cached address handle pointer.
+    ah: IbvAh,
+
+    /// Cached QPN.
+    qpn: Qpn,
+}
+
+impl fmt::Debug for QpPeer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("QpPeer")
-            .field("endpoint", &self.ep)
+            .field("endpoint", &self.inner.ep)
             .finish()
     }
 }
 
-impl<'a> QpPeer<'a> {
+impl QpPeer {
     /// Create a new peer
-    pub(crate) fn new(pd: &'a Pd<'a>, sgid_index: u8, ep: QpEndpoint) -> io::Result<Self> {
+    pub(crate) fn new(pd: &Pd, sgid_index: u8, ep: QpEndpoint) -> io::Result<Self> {
         let mut ah_attr = ibv_ah_attr {
             grh: ibv_global_route {
                 dgid: ep.gid.into(),
@@ -89,10 +108,17 @@ impl<'a> QpPeer<'a> {
         // SAFETY: FFI.
         let ah = unsafe { ibv_create_ah(pd.as_raw(), &mut ah_attr) };
         let ah = NonNull::new(ah).ok_or_else(IoError::last_os_error)?;
+        let ah = IbvAh(ah);
+
+        let qpn = ep.qpn;
         Ok(Self {
-            pd: PhantomData,
-            ah: IbvAh::from(ah),
-            ep,
+            inner: Arc::new(QpPeerInner {
+                _pd: pd.clone(),
+                ah,
+                ep,
+            }),
+            ah,
+            qpn,
         })
     }
 
@@ -105,7 +131,7 @@ impl<'a> QpPeer<'a> {
     /// Get the endpoint data of this peer.
     #[inline]
     pub fn endpoint(&self) -> &QpEndpoint {
-        &self.ep
+        &self.inner.ep
     }
 
     /// Generate a [`ud_t`] instance for RDMA sends to this peer.
@@ -113,15 +139,8 @@ impl<'a> QpPeer<'a> {
     pub fn ud(&self) -> ud_t {
         ud_t {
             ah: self.ah.as_ptr(),
-            remote_qpn: self.ep.qpn,
+            remote_qpn: self.qpn,
             remote_qkey: Qp::GLOBAL_QKEY,
         }
-    }
-}
-
-impl Drop for QpPeer<'_> {
-    fn drop(&mut self) {
-        // SAFETY: call only once, and no UAF since I will be dropped.
-        unsafe { self.ah.destroy() }.expect("cannot destroy AH on drop");
     }
 }

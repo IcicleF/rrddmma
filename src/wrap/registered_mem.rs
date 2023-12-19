@@ -15,17 +15,17 @@ use crate::rdma::pd::*;
 /// allocated on the heap, which isn't movable, and that it will definitely
 /// get dropped before the referenced memory.
 /// However, you should still use this type with some care.
-pub struct RegisteredMem<'a> {
+pub struct RegisteredMem {
     /// The memory region, dropped first.
-    mr: Mr<'a>,
+    mr: Mr,
 
     /// The allocated buffer, dropped after the `Mr`.
     buf: Box<[u8]>,
 }
 
-impl<'a> RegisteredMem<'a> {
+impl RegisteredMem {
     /// Allocate memory with the given length and register MR on it.
-    pub fn new(pd: &'a Pd<'a>, len: usize) -> io::Result<Self> {
+    pub fn new(pd: &Pd, len: usize) -> io::Result<Self> {
         if len == 0 {
             return Err(IoError::new(
                 IoErrorKind::InvalidInput,
@@ -40,7 +40,7 @@ impl<'a> RegisteredMem<'a> {
 
     /// Take ownership of the provided memory region and register MR on it.
     /// On error, the provided buffer will be returned along with the error.
-    pub fn new_owned(pd: &'a Pd<'a>, buf: Box<[u8]>) -> Result<Self, (Box<[u8]>, IoError)> {
+    pub fn new_owned(pd: &Pd, buf: Box<[u8]>) -> Result<Self, (Box<[u8]>, IoError)> {
         if buf.is_empty() {
             return Err((
                 buf,
@@ -52,7 +52,7 @@ impl<'a> RegisteredMem<'a> {
         }
 
         // Leak the buffer to get it as a 'a reference.
-        let buf: &'a mut [u8] = Box::leak(buf);
+        let buf = Box::leak(buf);
 
         // SAFETY: the buffer is valid.
         let mr = unsafe { Mr::reg(pd, buf.as_mut_ptr(), buf.len(), Permission::default()) };
@@ -69,7 +69,7 @@ impl<'a> RegisteredMem<'a> {
 
     /// Allocate memory that shares the same length and content with the provided
     /// slice, and then register MR on it.
-    pub fn new_with_content(pd: &'a Pd<'a>, content: &[u8]) -> io::Result<Self> {
+    pub fn new_with_content(pd: &Pd, content: &[u8]) -> io::Result<Self> {
         if content.is_empty() {
             return Err(IoError::new(
                 IoErrorKind::InvalidInput,
@@ -97,7 +97,7 @@ impl<'a> RegisteredMem<'a> {
 
     /// Get the underlying [`Mr`].
     #[inline]
-    pub fn mr(&self) -> &Mr<'a> {
+    pub fn mr(&self) -> &Mr {
         &self.mr
     }
 
@@ -111,7 +111,7 @@ impl<'a> RegisteredMem<'a> {
     }
 }
 
-impl Deref for RegisteredMem<'_> {
+impl Deref for RegisteredMem {
     type Target = [u8];
 
     #[inline]
@@ -120,17 +120,14 @@ impl Deref for RegisteredMem<'_> {
     }
 }
 
-impl DerefMut for RegisteredMem<'_> {
+impl DerefMut for RegisteredMem {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.buf.as_mut()
     }
 }
 
-unsafe impl<'a, 's> Slicing<'s> for RegisteredMem<'a>
-where
-    'a: 's,
-{
+unsafe impl<'s> Slicing<'s> for RegisteredMem {
     type Output = MrSlice<'s>;
 
     fn addr(&'s self) -> *mut u8 {

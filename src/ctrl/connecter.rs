@@ -59,7 +59,7 @@ impl Connecter {
     /// # Panics
     ///
     /// Panic if any QP is not bound to a local port.
-    pub fn connect_local(first: &mut Qp<'_>, second: &mut Qp<'_>) -> io::Result<()> {
+    pub fn connect_local(first: &mut Qp, second: &mut Qp) -> io::Result<()> {
         let ep_first = first.endpoint().unwrap();
         let ep_second = second.endpoint().unwrap();
         first
@@ -102,10 +102,7 @@ impl Connecter {
     /// # Panics
     ///
     /// Panic if the QP is not bound to a local port.
-    pub fn connect<'a, 'b>(&self, qp: &'b mut Qp<'a>) -> io::Result<Option<QpPeer<'b>>>
-    where
-        'a: 'b,
-    {
+    pub fn connect(&self, qp: &mut Qp) -> io::Result<Option<QpPeer>> {
         let ep = qp.endpoint();
         let ep = serde_json::to_string(&ep)?;
 

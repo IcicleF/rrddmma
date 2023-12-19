@@ -5,6 +5,7 @@ mod ty;
 
 use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::ptr::NonNull;
+use std::sync::Arc;
 use std::{fmt, mem, ptr};
 
 use thiserror::Error;
@@ -77,27 +78,44 @@ pub enum QpCreationError {
     CapabilityNotEnough(String, u32, u32),
 }
 
-/// Queue pair.
-///
-/// **Subtyping:** [`Qp<'a>`] is *covariant* over `'a`.
-pub struct Qp<'a> {
-    pd: &'a Pd<'a>,
+/// Ownership holder of queue pair.
+struct QpInner {
+    pd: Pd,
     qp: IbvQp,
-    init_attr: QpInitAttr<'a>,
-
-    local_port: Option<(Port, GidIndex)>,
-    peer: Option<QpPeer<'a>>,
+    init_attr: QpInitAttr,
 }
 
-impl fmt::Debug for Qp<'_> {
+impl Drop for QpInner {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.qp.destroy() }.expect("cannot destroy QP on drop");
+    }
+}
+
+/// Queue pair.
+pub struct Qp {
+    /// Queue pair body.
+    inner: Arc<QpInner>,
+
+    /// Cached queue pair pointer.
+    qp: IbvQp,
+
+    /// Local port that this QP is bound to.
+    local_port: Option<(Port, GidIndex)>,
+
+    /// Remote peer that this QP is connected to.
+    peer: Option<QpPeer>,
+}
+
+impl fmt::Debug for Qp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("Qp<{:p}>", self.as_raw()))
     }
 }
 
-impl<'a> Qp<'a> {
+impl Qp {
     /// Check whether the given capabilities are supported by the device.
-    fn check_caps(ctx: &'a Context, caps: &QpCaps) -> Result<(), QpCreationError> {
+    fn check_caps(ctx: &Context, caps: &QpCaps) -> Result<(), QpCreationError> {
         let attr = ctx.attr();
         if caps.max_send_wr > attr.max_qp_wr as _ {
             return Err(QpCreationError::CapabilityNotEnough(
@@ -131,7 +149,7 @@ impl<'a> Qp<'a> {
     }
 
     /// Create a new queue pair with the given initialization attributes.
-    pub(crate) fn new(pd: &'a Pd<'a>, init_attr: QpBuilder<'a>) -> Result<Self, QpCreationError> {
+    pub(crate) fn new(pd: &Pd, init_attr: QpBuilder<'_>) -> Result<Self, QpCreationError> {
         let init_attr = init_attr.unwrap();
         Self::check_caps(pd.context(), &init_attr.caps)?;
 
@@ -140,11 +158,15 @@ impl<'a> Qp<'a> {
             ibv_create_qp(pd.as_raw(), &mut init_attr)
         };
         let qp = NonNull::new(qp).ok_or_else(io::Error::last_os_error)?;
+        let qp = IbvQp(qp);
 
         let qp = Qp {
-            pd,
-            qp: IbvQp::from(qp),
-            init_attr,
+            inner: Arc::new(QpInner {
+                pd: pd.clone(),
+                qp,
+                init_attr,
+            }),
+            qp,
             local_port: None,
             peer: None,
         };
@@ -265,7 +287,7 @@ impl<'a> Qp<'a> {
     }
 }
 
-impl<'a> Qp<'a> {
+impl Qp {
     /// Global initial packet sequence number.
     pub const GLOBAL_INIT_PSN: Psn = 0;
 
@@ -273,7 +295,7 @@ impl<'a> Qp<'a> {
     pub const GLOBAL_QKEY: QKey = 0x114514;
 
     /// Create a new QP builder.
-    pub fn builder() -> QpBuilder<'a> {
+    pub fn builder<'a>() -> QpBuilder<'a> {
         Default::default()
     }
 
@@ -284,15 +306,13 @@ impl<'a> Qp<'a> {
     }
 
     /// Get the protection domain of the queue pair.
-    #[inline]
-    pub fn pd(&self) -> &'a Pd {
-        self.pd
+    pub fn pd(&self) -> &Pd {
+        &self.inner.pd
     }
 
     /// Get the context of the queue pair.
-    #[inline]
-    pub fn context(&self) -> &'a Context {
-        self.pd.context()
+    pub fn context(&self) -> &Context {
+        self.inner.pd.context()
     }
 
     /// Get the type of the queue pair.
@@ -314,9 +334,8 @@ impl<'a> Qp<'a> {
     }
 
     /// Get the capabilities of this QP.
-    #[inline]
     pub fn caps(&self) -> &QpCaps {
-        &self.init_attr.caps
+        &self.inner.init_attr.caps
     }
 
     /// Get the information of the local port that this QP is bound to.
@@ -340,14 +359,14 @@ impl<'a> Qp<'a> {
 
     /// Get the associated send completion queue.
     #[inline]
-    pub fn scq(&self) -> &'a Cq {
-        self.init_attr.send_cq
+    pub fn scq(&self) -> &Cq {
+        &self.inner.init_attr.send_cq
     }
 
     /// Get the associated receive completion queue.
     #[inline]
-    pub fn rcq(&self) -> &'a Cq {
-        self.init_attr.recv_cq
+    pub fn rcq(&self) -> &Cq {
+        &self.inner.init_attr.recv_cq
     }
 
     /// Bind the queue pair to a local port.
@@ -407,7 +426,7 @@ impl<'a> Qp<'a> {
         assert!(self.peer.is_none(), "QP already bound to a remote peer");
 
         self.peer = Some(QpPeer::new(
-            self.pd,
+            self.pd(),
             self.local_port.as_ref().unwrap().1,
             ep,
         )?);
@@ -500,10 +519,6 @@ impl<'a> Qp<'a> {
         signal: bool,
         inline: bool,
     ) -> io::Result<()> {
-        if !signal && self.init_attr.sq_sig_all {
-            log::warn!("QP configured to signal all sends despite this send ask to not signal");
-        }
-
         let mut sgl = build_sgl(local);
         let mut wr = ibv_send_wr {
             wr_id,
@@ -549,12 +564,6 @@ impl<'a> Qp<'a> {
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
-        if !signal && self.init_attr.sq_sig_all {
-            log::warn!(
-                "QP configured to signal all sends despite this RDMA read ask to not signal"
-            );
-        }
-
         let mut sgl = build_sgl(local);
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
         wr = ibv_send_wr {
@@ -594,12 +603,6 @@ impl<'a> Qp<'a> {
         imm: Option<ImmData>,
         signal: bool,
     ) -> io::Result<()> {
-        if !signal && self.init_attr.sq_sig_all {
-            log::warn!(
-                "QP configured to signal all sends despite this RDMA write ask to not signal"
-            );
-        }
-
         let mut sgl = build_sgl(local);
         let mut wr = ibv_send_wr {
             wr_id,
@@ -645,10 +648,6 @@ impl<'a> Qp<'a> {
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
-        if !signal && self.init_attr.sq_sig_all {
-            log::warn!("QP configured to signal all sends despite this RDMA CAS ask to not signal");
-        }
-
         if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
             return Err(IoError::new(
                 IoErrorKind::InvalidInput,
@@ -713,10 +712,6 @@ impl<'a> Qp<'a> {
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
-        if !signal && self.init_attr.sq_sig_all {
-            log::warn!("QP configured to signal all sends despite this RDMA FAA ask to not signal");
-        }
-
         if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
             return Err(IoError::new(
                 IoErrorKind::InvalidInput,
@@ -774,12 +769,6 @@ impl<'a> Qp<'a> {
             return Ok(());
         }
 
-        if ops.iter().any(|wr| !wr.is_signaled()) && self.init_attr.sq_sig_all {
-            log::warn!(
-                "QP configured to signal all sends despite some work requests ask to not signal"
-            );
-        }
-
         // Safety: we only hold references to the `SendWr`s, whose lifetimes
         // can only outlive this function. `ibv_post_send` is used inside this
         // function, so the work requests are guaranteed to be valid.
@@ -809,13 +798,6 @@ impl<'a> Qp<'a> {
             ibv_post_send(self.as_raw(), &head as *const _ as *mut _, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
-    }
-}
-
-impl Drop for Qp<'_> {
-    fn drop(&mut self) {
-        // SAFETY: call only once, and no UAF since I will be dropped.
-        unsafe { self.qp.destroy() }.expect("cannot destroy QP on drop");
     }
 }
 

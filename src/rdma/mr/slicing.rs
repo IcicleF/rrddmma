@@ -101,7 +101,7 @@ pub unsafe trait Slicing<'s>: Sealed {
 
 trait Sealed {}
 
-impl Sealed for Mr<'_> {}
+impl Sealed for Mr {}
 impl Sealed for MrSlice<'_> {}
 impl Sealed for RemoteMem {}
-impl Sealed for crate::wrap::RegisteredMem<'_> {}
+impl Sealed for crate::wrap::RegisteredMem {}

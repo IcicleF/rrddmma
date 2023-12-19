@@ -79,10 +79,10 @@ impl Default for QpCaps {
 #[derive(Clone)]
 pub struct QpBuilder<'a> {
     /// Send completion queue for this QP.
-    pub send_cq: Option<&'a Cq<'a>>,
+    pub send_cq: Option<&'a Cq>,
 
     /// Receive completion queue for this QP. Can be the same to send CQ.
-    pub recv_cq: Option<&'a Cq<'a>>,
+    pub recv_cq: Option<&'a Cq>,
 
     /// Capabilities of this QP.
     pub caps: QpCaps,
@@ -97,10 +97,10 @@ pub struct QpBuilder<'a> {
 impl<'a> QpBuilder<'a> {
     /// Unwrap the builder and return the underlying attributes.
     #[inline]
-    pub(super) fn unwrap(self) -> QpInitAttr<'a> {
+    pub(super) fn unwrap(self) -> QpInitAttr {
         QpInitAttr {
-            send_cq: self.send_cq.expect("send CQ must be set"),
-            recv_cq: self.recv_cq.expect("recv CQ must be set"),
+            send_cq: self.send_cq.expect("send CQ must be set").clone(),
+            recv_cq: self.recv_cq.expect("recv CQ must be set").clone(),
             caps: self.caps,
             qp_type: self.qp_type.expect("QP type must be set"),
             sq_sig_all: self.sq_sig_all.expect("sq_sig_all must be explicitly set"),
@@ -125,14 +125,14 @@ impl<'a> QpBuilder<'a> {
 
     /// Set the send completion queue for this QP.
     #[inline]
-    pub fn send_cq(mut self, send_cq: &'a Cq<'a>) -> Self {
+    pub fn send_cq(mut self, send_cq: &'a Cq) -> Self {
         self.send_cq = Some(send_cq);
         self
     }
 
     /// Set the receive completion queue for this QP.
     #[inline]
-    pub fn recv_cq(mut self, recv_cq: &'a Cq<'a>) -> Self {
+    pub fn recv_cq(mut self, recv_cq: &'a Cq) -> Self {
         self.recv_cq = Some(recv_cq);
         self
     }
@@ -165,7 +165,7 @@ impl<'a> QpBuilder<'a> {
     ///
     /// Panic if any mandatory fields (except QP capabilities) are not set.
     #[inline]
-    pub fn build(self, pd: &'a Pd<'a>) -> Result<Qp<'a>, QpCreationError> {
+    pub fn build(self, pd: &Pd) -> Result<Qp, QpCreationError> {
         Qp::new(pd, self)
     }
 }
@@ -177,12 +177,12 @@ impl Default for QpBuilder<'_> {
 }
 
 /// [`QpBuilder`] with mandatory fields.
-pub(super) struct QpInitAttr<'a> {
+pub(super) struct QpInitAttr {
     /// Send completion queue for this QP.
-    pub send_cq: &'a Cq<'a>,
+    pub send_cq: Cq,
 
     /// Receive completion queue for this QP. Can be the same to send CQ.
-    pub recv_cq: &'a Cq<'a>,
+    pub recv_cq: Cq,
 
     /// Capabilities of this QP.
     pub caps: QpCaps,
@@ -194,9 +194,9 @@ pub(super) struct QpInitAttr<'a> {
     pub sq_sig_all: bool,
 }
 
-impl From<&QpInitAttr<'_>> for ibv_qp_init_attr {
+impl From<&'_ QpInitAttr> for ibv_qp_init_attr {
     /// Translate the initialization attributes into [`ibv_qp_init_attr`].
-    fn from(value: &QpInitAttr<'_>) -> Self {
+    fn from(value: &QpInitAttr) -> Self {
         ibv_qp_init_attr {
             send_cq: value.send_cq.as_raw(),
             recv_cq: value.recv_cq.as_raw(),

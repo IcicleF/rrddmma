@@ -37,7 +37,7 @@ struct WrBase<'mem> {
     /// Pretend to hold a reference to the original memory regions even if we
     /// have already transformed the slices into a scatter-gather list.
     /// This prevents the SGL from being invalid.
-    marker: PhantomData<&'mem Mr<'mem>>,
+    marker: PhantomData<&'mem Mr>,
 }
 
 /// Send work request details.
@@ -65,7 +65,7 @@ pub enum SendWrDetails<'a> {
     /// Send via UD QP.
     SendUd {
         /// Information of the receiver.
-        peer: &'a QpPeer<'a>,
+        peer: &'a QpPeer,
         /// [`Some`] to send with an immediate value, or [`None`] to send without.
         imm: Option<ImmData>,
         /// Indicate whether to inline the send.

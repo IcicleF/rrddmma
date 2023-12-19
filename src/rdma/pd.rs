@@ -1,5 +1,6 @@
 use std::io::{self, Error as IoError};
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use super::context::Context;
 use crate::bindings::*;
@@ -26,24 +27,49 @@ impl IbvPd {
 
 impl_ibv_wrapper_traits!(ibv_pd, IbvPd);
 
-/// Protection domain.
-///
-/// **Subtyping:** [`Pd<'a>`] is *covariant* over `'a`.
-pub struct Pd<'a> {
-    ctx: &'a Context,
+/// Ownership holder of protection domain.
+struct PdInner {
+    ctx: Context,
     pd: IbvPd,
 }
 
-impl<'a> Pd<'a> {
+impl Drop for PdInner {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.pd.dealloc() }.expect("cannot dealloc PD on drop");
+    }
+}
+
+/// Protection domain.
+pub struct Pd {
+    inner: Arc<PdInner>,
+    pd: IbvPd,
+}
+
+impl Pd {
+    /// Make a clone of the `Arc` pointer.
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            pd: self.pd,
+        }
+    }
+}
+
+impl Pd {
     /// Allocate a protection domain for the given RDMA device context.
-    pub fn new(ctx: &'a Context) -> io::Result<Self> {
+    pub fn new(ctx: &Context) -> io::Result<Self> {
         // SAFETY: FFI
         let pd = unsafe { ibv_alloc_pd(ctx.as_raw()) };
         let pd = NonNull::new(pd).ok_or_else(IoError::last_os_error)?;
+        let pd = IbvPd(pd);
 
         Ok(Self {
-            ctx,
-            pd: IbvPd::from(pd),
+            inner: Arc::new(PdInner {
+                ctx: ctx.clone(),
+                pd,
+            }),
+            pd,
         })
     }
 
@@ -55,14 +81,7 @@ impl<'a> Pd<'a> {
 
     /// Get the underlying `Context`.
     #[inline]
-    pub fn context(&self) -> &'a Context {
-        self.ctx
-    }
-}
-
-impl Drop for Pd<'_> {
-    fn drop(&mut self) {
-        // SAFETY: call only once, and no UAF since I will be dropped.
-        unsafe { self.pd.dealloc() }.expect("cannot dealloc PD on drop");
+    pub fn context(&self) -> &Context {
+        &self.inner.ctx
     }
 }

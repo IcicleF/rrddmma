@@ -1,6 +1,7 @@
 use std::io;
 use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
+use std::sync::Arc;
 
 use super::nic::*;
 use crate::bindings::*;
@@ -46,16 +47,43 @@ impl IbvContext {
 
 impl_ibv_wrapper_traits!(ibv_context, IbvContext);
 
-/// Device context.
-pub struct Context {
+/// Ownership holder of device context.
+struct ContextInner {
     ctx: IbvContext,
     attr: ibv_device_attr,
+}
+
+impl Drop for ContextInner {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.ctx.close() }.expect("cannot close context on drop");
+    }
+}
+
+/// Device context.
+pub struct Context {
+    /// Context body.
+    inner: Arc<ContextInner>,
+
+    /// Cached context pointer.
+    ctx: IbvContext,
 }
 
 impl Context {
     /// Create a context from an opened device and its attributes.
     pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
-        Self { ctx, attr }
+        Self {
+            inner: Arc::new(ContextInner { ctx, attr }),
+            ctx,
+        }
+    }
+
+    /// Make a clone of the `Arc` pointer.
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            ctx: self.ctx,
+        }
     }
 }
 
@@ -69,7 +97,7 @@ impl Context {
     /// Get the device attributes.
     #[inline]
     pub fn attr(&self) -> &ibv_device_attr {
-        &self.attr
+        &self.inner.attr
     }
 }
 
@@ -79,12 +107,5 @@ impl AsRawFd for Context {
         // SAFETY: the underlying `ibv_context` is valid.
         let ibv_ctx = &unsafe { *self.ctx.as_ref() };
         ibv_ctx.cmd_fd
-    }
-}
-
-impl Drop for Context {
-    fn drop(&mut self) {
-        // SAFETY: call only once, and no UAF since I will be dropped.
-        unsafe { self.ctx.close() }.expect("cannot close context on drop");
     }
 }

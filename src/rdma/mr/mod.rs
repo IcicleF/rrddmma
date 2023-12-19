@@ -3,11 +3,10 @@ mod perm;
 mod remote;
 mod slicing;
 
-use std::cell::UnsafeCell;
 use std::io::{self, Error as IoError};
-use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::slice;
+use std::sync::Arc;
 
 pub use self::mr_slice::*;
 pub use self::perm::*;
@@ -63,20 +62,41 @@ impl IbvMr {
 
 impl_ibv_wrapper_traits!(ibv_mr, IbvMr);
 
+/// Ownership holder of memory region.
+struct MrInner {
+    pd: Pd,
+    mr: IbvMr,
+}
+
+impl Drop for MrInner {
+    fn drop(&mut self) {
+        // SAFETY: call only once, and no UAF since I will be dropped.
+        unsafe { self.mr.dereg() }.expect("cannot dereg MR on drop");
+    }
+}
+
 /// Local memory region.
 ///
 /// A memory region is a virtual memory space registered to the RDMA device.
 /// The registered memory itself does not belong to this type, but it must
 /// outlive this type's lifetime (`'mem`) or there can be dangling pointers.
-///
-/// **Subtyping:** [`Mr<'a>`] is *covariant* over `'a`.
-pub struct Mr<'a> {
-    pd: PhantomData<&'a Pd<'a>>,
+pub struct Mr {
+    inner: Arc<MrInner>,
     mr: IbvMr,
-    _marker: PhantomData<&'a UnsafeCell<[u8]>>,
 }
 
-impl<'a> Mr<'a> {
+impl Mr {
+    /// Make a clone of the `Arc` pointer.
+    #[allow(dead_code)]
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            mr: self.mr,
+        }
+    }
+}
+
+impl Mr {
     /// Register a memory region on the given range of virtual memory.
     ///
     /// # Safety
@@ -89,14 +109,15 @@ impl<'a> Mr<'a> {
     /// invalid requests. However, if the registered address range is valid but
     /// not what the user wants, one-sided RDMA requests from the remote can
     /// unexpectedly modify the memory, leading to undefined behavior.
-    pub unsafe fn reg(pd: &'a Pd, buf: *mut u8, len: usize, perm: Permission) -> io::Result<Self> {
+    pub unsafe fn reg(pd: &Pd, buf: *mut u8, len: usize, perm: Permission) -> io::Result<Self> {
         // SAFETY: FFI.
         let mr = unsafe { ibv_reg_mr(pd.as_raw(), buf as _, len, perm.into()) };
         let mr = NonNull::new(mr).ok_or_else(IoError::last_os_error)?;
+        let mr = IbvMr(mr);
+
         Ok(Self {
-            pd: PhantomData,
-            mr: IbvMr::from(mr),
-            _marker: PhantomData,
+            inner: Arc::new(MrInner { pd: pd.clone(), mr }),
+            mr,
         })
     }
 
@@ -118,13 +139,18 @@ impl<'a> Mr<'a> {
         self.mr.rkey()
     }
 
+    /// Get the underlying [`Pd`].
+    pub fn pd(&self) -> &Pd {
+        &self.inner.pd
+    }
+
     /// Retrieve the registered memory area as a slice.
     ///
     /// # Safety
     ///
     /// See the safety documentation of [`std::slice::from_raw_parts_mut`].
     #[inline]
-    pub unsafe fn mem(&self) -> &'a mut [u8] {
+    pub unsafe fn mem<'a>(&self) -> &'a mut [u8] {
         slice::from_raw_parts_mut(self.addr(), self.len())
     }
 
@@ -140,10 +166,7 @@ impl<'a> Mr<'a> {
     }
 }
 
-unsafe impl<'a, 's> Slicing<'s> for Mr<'a>
-where
-    'a: 's,
-{
+unsafe impl<'s> Slicing<'s> for Mr {
     type Output = MrSlice<'s>;
 
     #[inline]
@@ -159,12 +182,5 @@ where
     #[inline]
     unsafe fn slice_unchecked(&'s self, offset: usize, len: usize) -> Self::Output {
         MrSlice::new(self, offset, len)
-    }
-}
-
-impl Drop for Mr<'_> {
-    fn drop(&mut self) {
-        // SAFETY: call only once, and no UAF since I will be dropped.
-        unsafe { self.mr.dereg() }.expect("cannot dereg MR on drop");
     }
 }
