@@ -61,7 +61,7 @@ impl Default for QpCaps {
     /// - 16 SGEs per send/recv work request, and
     /// - 64B inline data.
     ///
-    /// **NOTE:** Such a setting might **NOT** be supported by the underlying
+    /// **NOTE:** Such a setting might *not* be supported by the underlying
     /// RDMA device.
     fn default() -> Self {
         QpCaps {

@@ -24,7 +24,7 @@ pub struct NicFinder {
     dev_names: Vec<Regex>,
 
     /// Port number filter.
-    port_num: u8,
+    port_nums: Vec<u8>,
 
     /// Port speed filter.
     port_speed: PortSpeedFilter,
@@ -51,36 +51,40 @@ impl NicFinder {
     ///
     /// - `ctx` must be a valid pointer to an `ibv_context`.
     fn is_device_eligible(&self, ctx: IbvContext) -> bool {
-        // Device name.
-        let match_names = self.dev_names.is_empty() || {
-            let Ok(dev_name) = ctx.dev().name() else {
-                return false;
-            };
-            self.dev_names.iter().any(|re| re.is_match(&dev_name))
-        };
-
-        // Port number.
-        let match_port = {
-            let Ok(dev_attr) = ctx.query_device() else {
-                return false;
-            };
-            dev_attr.phys_port_cnt >= self.port_num
-        };
-
-        // NUMA node.
-        let match_numa = self.numa_nodes.is_empty() || {
-            let Ok(numa) = ctx.dev().numa_node() else {
-                return false;
-            };
-            self.numa_nodes.contains(&numa)
-        };
-
-        match_names && match_port && match_numa
+        // Short-circuit evaluation.
+        (
+            // Device name.
+            self.dev_names.is_empty() || {
+                let Ok(dev_name) = ctx.dev().name() else {
+                    return false;
+                };
+                self.dev_names.iter().any(|re| re.is_match(&dev_name))
+            }
+        ) && ({
+            // Port number.
+            self.port_nums.is_empty() || {
+                let Ok(dev_attr) = ctx.query_device() else {
+                    return false;
+                };
+                self.port_nums
+                    .iter()
+                    .all(|&num| num <= dev_attr.phys_port_cnt)
+            }
+        }) && (
+            // NUMA node.
+            self.numa_nodes.is_empty() || {
+                let Ok(numa) = ctx.dev().numa_node() else {
+                    return false;
+                };
+                self.numa_nodes.contains(&numa)
+            }
+        )
     }
 
     /// Determine whether the current filter matches the specified port.
     ///
     /// Checked filter(s):
+    /// - Port number
     /// - Port speed
     /// - Port link layer protocol
     ///
@@ -95,19 +99,23 @@ impl NicFinder {
             return false;
         };
 
-        // Port speed.
-        let match_speed = match self.port_speed {
-            PortSpeedFilter::AtLeast(speed) => speed <= port.speed().gbps(),
-            PortSpeedFilter::Exactly(speed) => speed == port.speed().gbps(),
-        };
-
-        // Link layer protocol.
-        let match_link_layer = self.port_link_layer.is_none() || {
-            let link_layer = port.link_layer();
-            self.port_link_layer == Some(link_layer)
-        };
-
-        match_speed && match_link_layer
+        // Short-circuit evaluation.
+        (
+            // Port number.
+            self.port_nums.is_empty() || self.port_nums.contains(&port_num)
+        ) && (
+            // Port speed.
+            match self.port_speed {
+                PortSpeedFilter::AtLeast(speed) => speed <= port.speed().gbps(),
+                PortSpeedFilter::Exactly(speed) => speed == port.speed().gbps(),
+            }
+        ) && (
+            // Link layer protocol.
+            self.port_link_layer.is_none() || {
+                let link_layer = port.link_layer();
+                self.port_link_layer == Some(link_layer)
+            }
+        )
     }
 }
 
@@ -116,7 +124,7 @@ impl NicFinder {
     pub fn new() -> Self {
         Self {
             dev_names: Vec::new(),
-            port_num: 1,
+            port_nums: Vec::new(),
             port_speed: PortSpeedFilter::AtLeast(0.0),
             port_link_layer: None,
             numa_nodes: Vec::new(),
@@ -124,12 +132,12 @@ impl NicFinder {
     }
 
     /// Set a device name filter.
-    /// Permit only devices whose name matches **any** of the filters.
+    /// Permit only devices whose name matches *any* of the filters.
     ///
     /// Regular expressions are supported.
     ///
     /// Device names are those returned by `ibv_get_device_name` or shown in `ibv_devinfo`
-    /// command-line tool (e.g., `mlx5_0`). Note that this is **NOT** the network interface name
+    /// command-line tool (e.g., `mlx5_0`). Note that this is *not* the network interface name
     /// (e.g., `ib0` or `enp65s0f0`).
     #[inline]
     pub fn dev_name(mut self, name: impl AsRef<str>) -> Self {
@@ -139,17 +147,17 @@ impl NicFinder {
     }
 
     /// Set a port number filter.
-    /// Permit only devices who have at least the specified number of physical ports.
+    /// Permit only ports with *any* of the specified port numbers.
     ///
     /// You may check the port numbers with the `ibv_devinfo` command-line tool.
     ///
-    /// This will override the previous port number filter, if any.
+    /// # Panic
+    ///
+    /// Panics if `num` is 0.
     #[inline]
     pub fn port_num(mut self, num: u8) -> Self {
-        if num == 0 {
-            panic!("port number must be positive");
-        }
-        self.port_num = num;
+        assert!(num > 0, "port number must be positive");
+        self.port_nums.push(num);
         self
     }
 
@@ -188,7 +196,7 @@ impl NicFinder {
     }
 
     /// Set a NUMA node filter.
-    /// Permit only devices installed on **any** of the specified NUMA nodes.
+    /// Permit only devices installed on *any* of the specified NUMA nodes.
     ///
     /// You may check the NUMA node of a device by inspecting its device directory, e.g.,
     /// `/sys/class/infiniband/mlx5_0/device/numa_node`.
@@ -199,6 +207,9 @@ impl NicFinder {
     }
 
     /// Find the first eligible RDMA device and open it.
+    ///
+    /// **NOTE:** The returned device contains information of *all* its physical ports,
+    /// not only those matching the port filter.
     #[inline]
     pub fn probe(self) -> Result<Nic, NicProbeError> {
         self.probe_nth_dev(0)
@@ -207,7 +218,8 @@ impl NicFinder {
     /// Find the `n`-th eligible RDMA device and open it.
     /// Start counting from 0.
     ///
-    /// The returned device contains information of all its physical ports.
+    /// **NOTE:** The returned device contains information of *all* its physical ports,
+    /// not only those matching the port filter.
     pub fn probe_nth_dev(self, mut n: usize) -> Result<Nic, NicProbeError> {
         let dev_list = IbvDeviceList::new()?;
         for dev in &dev_list {
@@ -239,7 +251,7 @@ impl NicFinder {
     /// Find the RDMA device that contains the `n`-th eligible port and open the device.
     /// Start counting from 0.
     ///
-    /// The returned device contains information of only the specified port.
+    /// **NOTE:** The returned device contains information of *only* the ports that match the filters.
     pub fn probe_nth_port(self, mut n: usize) -> Result<Nic, NicProbeError> {
         let dev_list = IbvDeviceList::new()?;
         for dev in &dev_list {
@@ -276,7 +288,7 @@ impl Default for NicFinder {
     }
 }
 
-/// Probe error type for [`NicFinder`].
+/// NIC probe result error type.
 #[derive(Debug, Error)]
 pub enum NicProbeError {
     /// **I/O error:** `libibverbs` interfaces returned an error
@@ -293,10 +305,13 @@ pub enum NicProbeError {
     NotFound,
 }
 
-/// Probe result type for [`NicFinder`].
+/// NIC probe result type.
 /// Contains an opened RDMA device and a set of port metadata.
 pub struct Nic {
+    /// Device context.
     pub context: Context,
+
+    /// Port metadata.
     pub ports: Vec<Port>,
 }
 

@@ -1,15 +1,8 @@
 //! An RDMA library consisting of a safe RDMA wrapping and several useful
 //! functionalities to build RDMA connections.
-//! It is built atop the [`rdma-sys`] crate and mainly designed for academic
-//! research purposes.
 //!
-//! `rrddmma` provides safe wrappings with `Arc`-based custom types. All RDMA
-//! resource holder types ([`Context`], [`Pd`], [`Cq`], [`Mr`], and [`Qp`])
-//! should be viewed as references to the true underlying resources.
-//! You can share these resources simply by `clone()`-ing the abovementioned
-//! types' instances.
-//! While this does add an extra layer of indirection, it also drastically
-//! simplifies the system's design when it comes to multi-threading.
+//! Main functionalities are in the [`rdma`] mod, which provides mostly-safe
+//! wrappers of RDMA resources and data-plane operations.
 //!
 //! Aside from RDMA functionalities, there are some TCP-based connection
 //! management utilities in the [`ctrl`] mod. Currently there is only a
@@ -23,7 +16,7 @@
 //! This example sends and receives a message via RDMA RC QPs.
 //!
 //! ```rust
-#![doc = include_str!("../examples/local_sendrecv.rs")]
+#![doc = include_str!("../examples/local_rc_sendrecv.rs")]
 //! ```
 //!
 //! [`rdma-sys`]: https://docs.rs/rdma-sys/latest/rdma_sys/
@@ -31,13 +24,13 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("`rrddmma` currently only supports Linux");
 
-/// C bindings.
-mod bindings;
+/// Bindings of C interfaces.
+pub mod bindings;
 
-/// Shared util functions.
+/// Shared utility functions.
 mod utils;
 
-/// RDMA data-plane functionalities.
+/// RDMA functionalities.
 /// Not to be publicly exposed, instead `pub use` necessary items.
 mod rdma;
 

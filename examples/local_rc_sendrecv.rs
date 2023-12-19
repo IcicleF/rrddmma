@@ -1,8 +1,8 @@
 use rrddmma::{wrap::RegisteredMem, *};
 use std::{net::Ipv4Addr, thread};
 
-fn client() -> anyhow::Result<()> {
-    let Nic { context, ports } = Nic::finder().dev_name("mlx5_0").probe()?;
+fn make_qp(dev: &str) -> anyhow::Result<Qp> {
+    let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;
     let pd = Pd::new(&context)?;
     let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
     let mut qp = Qp::builder()
@@ -13,6 +13,11 @@ fn client() -> anyhow::Result<()> {
         .sq_sig_all(true)
         .build(&pd)?;
     qp.bind_local_port(&ports[0], None)?;
+    Ok(qp)
+}
+
+fn client() -> anyhow::Result<()> {
+    let mut qp = make_qp("mlx5_0")?;
     ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&mut qp)?;
 
     // Send the message to the server.
@@ -25,17 +30,7 @@ fn client() -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     let cli = thread::spawn(client);
 
-    let Nic { context, ports } = Nic::finder().dev_name("mlx5_0").probe()?;
-    let pd = Pd::new(&context)?;
-    let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
-    let mut qp = Qp::builder()
-        .qp_type(QpType::Rc)
-        .caps(QpCaps::default())
-        .send_cq(&cq)
-        .recv_cq(&cq)
-        .sq_sig_all(true)
-        .build(&pd)?;
-    qp.bind_local_port(&ports[0], None)?;
+    let mut qp = make_qp("mlx5_0")?;
     ctrl::Connecter::new(None)?.connect(&mut qp)?;
 
     // Receive a message from the client.

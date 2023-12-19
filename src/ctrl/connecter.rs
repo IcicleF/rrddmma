@@ -99,6 +99,10 @@ impl Connecter {
     /// Connect a QP with the remote peer.
     /// The QP must be already bound to a local port.
     ///
+    /// Behavior:
+    /// - If the QP is UC or RC, this will bring up the QP.
+    /// - If the QP is UD, this will only exchange peer information.
+    ///
     /// # Panics
     ///
     /// Panic if the QP is not bound to a local port.

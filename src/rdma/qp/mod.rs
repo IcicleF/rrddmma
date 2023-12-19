@@ -294,6 +294,9 @@ impl Qp {
     /// Global QKey.
     pub const GLOBAL_QKEY: QKey = 0x114514;
 
+    /// UD header size.
+    pub const GRH_SIZE: usize = 40;
+
     /// Create a new QP builder.
     pub fn builder<'a>() -> QpBuilder<'a> {
         Default::default()
@@ -373,7 +376,7 @@ impl Qp {
     /// Will modify the QP to RTS state if it is an unreliable datagram QP at
     /// RESET state.
     ///
-    /// This method is **NOT** commutative with [`Self::bind_peer()`]. You must
+    /// This method is *not* commutative with [`Self::bind_peer()`]. You must
     /// bind the QP to a local port before binding it to a remote peer.
     ///
     /// If no GID index is specified (i.e., `gid_index` is `None`), this
@@ -406,7 +409,7 @@ impl Qp {
     /// Will modify the QP to RTS state if it is an connected QP at RESET state
     /// and already bound to a local port.
     ///
-    /// This method is **NOT** commutative with [`Self::bind_local_port()`].
+    /// This method is *not* commutative with [`Self::bind_local_port()`].
     /// You must bind the QP to a local port before binding it to a remote peer.
     ///
     /// # Panics
