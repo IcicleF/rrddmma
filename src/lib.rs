@@ -1,12 +1,10 @@
-//! An RDMA library consisting of a safe RDMA wrapping and several useful
+//! An RDMA library consisting of safe RDMA wrappings and several useful
 //! functionalities to build RDMA connections.
 //!
-//! Aside from RDMA functionalities, there are some TCP-based connection
-//! management utilities in the [`ctrl`] mod. Currently there is only a
-//! connection builder ([`ctrl::Connecter`]). Some higher-level wrappings
-//! of RDMA resources are in the [`wrap`] mod and under continuous development.
-//!
-//! **WARNING: The interfaces are unstable and up to change!**
+//! This library respects existing installation of MLNX_OFED or ibverbs.
+//! Depending on the environment, it will enable `ibv_exp_*` or RDMA-Core
+//! features correspondingly. You may build the documentation in your
+//! own environment to see which features are enabled.
 //!
 //! # Example
 //!
@@ -15,8 +13,6 @@
 //! ```rust
 #![doc = include_str!("../examples/local_rc_sendrecv.rs")]
 //! ```
-//!
-//! [`rdma-sys`]: https://docs.rs/rdma-sys/latest/rdma_sys/
 
 #[cfg(not(target_os = "linux"))]
 compile_error!("`rrddmma` currently only supports Linux");
