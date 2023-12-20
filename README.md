@@ -24,6 +24,11 @@
 3.  Otherwise, `rrddmma` will try to download [rdma-core](https://github.com/linux-rdma/rdma-core) and build from source.
     If this approach is taken, only `libibverbs` interfaces are supported.
     Also, you need to ensure that the dependencies are properly installed.
+    In Ubuntu and other Debian-derived OSs, these are:
+
+    ```shell
+    sudo apt install -y build-essential cmake gcc libclang-dev libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
+    ```
 
 
 ## Implementation

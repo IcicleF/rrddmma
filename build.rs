@@ -138,7 +138,9 @@ fn main() {
 
     // Build the `ibverbs` library.
     if let Ok(link) = link_build() {
-        gen_verb_bindings(link.ver, link.include_dirs);
+        let mut include_dirs = link.include_dirs;
+        include_dirs.push("vendor/rdma-core/build/include".to_owned());
+        gen_verb_bindings(link.ver, include_dirs);
         return;
     }
 
