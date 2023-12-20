@@ -1,7 +1,6 @@
 use std::env::{self, consts};
 use std::path::Path;
 use std::process::Command;
-use std::vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VerbsVersion {
@@ -83,25 +82,40 @@ fn link_ibverbs() -> Result<IbverbsLinkage, ()> {
 
 /// Try to build `libibverbs` from source and link to it.
 fn link_build() -> Result<IbverbsLinkage, ()> {
-    // initialize and update submodules
-    if Path::new(".git").is_dir() {
+    // Initialize and update submodules.
+    let cur_dir = env::current_dir().map_err(|_| ())?;
+    if cur_dir.join(".git").is_dir() {
         Command::new("git")
             .args(&["submodule", "update", "--init"])
             .status()
             .map_err(|_| ())?;
-    } else if !Path::new("vendor/rdma-core").is_dir() {
+    } else if !cur_dir.join("vendor/rdma-core").is_dir() {
         return Err(());
     }
 
-    // build vendor/rdma-core
+    // Build vendor/rdma-core.
     Command::new("bash")
         .current_dir("vendor/rdma-core/")
-        .args(&["build.sh"])
+        .arg("build.sh")
+        .env("CFLAGS", "-fPIC")
+        .env("EXTRA_CMAKE_FLAGS", "-DENABLE_STATIC=1")
         .status()
         .map_err(|_| ())?;
 
-    println!("cargo:rustc-link-search=native=vendor/rdma-core/build/lib");
-    println!("cargo:rustc-link-lib=ibverbs");
+    // Link to static library, otherwise dylibs cannot be found when used as
+    // a dependency.
+    pkg_config::Config::new()
+        .probe("libnl-3.0")
+        .map_err(|_| ())?;
+    pkg_config::Config::new()
+        .probe("libnl-route-3.0")
+        .map_err(|_| ())?;
+
+    println!(
+        "cargo:rustc-link-search=native={}",
+        cur_dir.join("vendor/rdma-core/build/lib").display()
+    );
+    println!("cargo:rustc-link-lib=static=ibverbs");
 
     Ok(IbverbsLinkage::new(
         VerbsVersion::V5,
