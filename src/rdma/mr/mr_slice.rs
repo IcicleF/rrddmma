@@ -27,6 +27,19 @@ impl<'a> MrSlice<'a> {
     pub fn mr(&self) -> &Mr {
         self.mr
     }
+
+    /// Get the local key of the memory region.
+    #[inline]
+    pub fn lkey(&self) -> u32 {
+        self.mr.lkey()
+    }
+
+    /// Get the remote key of the memory region.
+    #[inline]
+    pub fn rkey(&self) -> u32 {
+        self.mr.rkey()
+    }
+
     /// Attempt to resize the memory region slice to the specified length.
     /// This attempt has no effect if the desired length is greater
     /// than the largest possible length of the slice.

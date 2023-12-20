@@ -1,7 +1,7 @@
 #![macro_use]
 
-use libc::*;
 use super::*;
+use libc::*;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -28,15 +28,6 @@ pub struct ibv_global_route {
 
 // ibv_send_wr related union and struct types
 #[repr(C)]
-#[derive(Copy, Clone)]
-pub struct ibv_mw_bind_info {
-    pub mr: *mut ibv_mr,
-    pub addr: u64,
-    pub length: u64,
-    pub mw_access_flags: ::std::os::raw::c_uint,
-}
-
-#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct rdma_t {
     pub remote_addr: u64,
@@ -61,6 +52,7 @@ pub struct ud_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub union wr_t {
     pub rdma: rdma_t,
     pub atomic: atomic_t,
@@ -110,28 +102,6 @@ pub union mw_rkey_bind_info_union_t {
     pub bind_info: ibv_mw_bind_info,
 }
 
-#[repr(C)]
-pub struct ibv_send_wr {
-    pub wr_id: u64,
-    pub next: *mut Self,
-    pub sg_list: *mut ibv_sge,
-    pub num_sge: c_int,
-    pub opcode: ibv_wr_opcode::Type,
-    pub send_flags: c_uint,
-    pub imm_data: u32,
-    pub wr: wr_t,
-    pub qp_type_xrc_remote_srq_num: qp_type_xrc_remote_srq_num_union_t,
-    pub bind_mw: mw_rkey_bind_info_union_t,
-}
-
-impl ibv_send_wr {
-    /// Set the immediate data.
-    #[inline(always)]
-    pub fn set_imm(&mut self, imm: u32) {
-        self.imm_data = imm;
-    }
-}
-
 // ibv_flow_spec related union and struct types
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -141,6 +111,7 @@ pub struct hdr_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub union ibv_flow_spec_union_t {
     pub hdr: hdr_t,
     pub eth: ibv_flow_spec_eth,
@@ -161,6 +132,7 @@ pub struct ibv_ah_attr {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ibv_flow_spec {
     pub ibv_flow_spec_union: ibv_flow_spec_union_t,
 }
@@ -199,7 +171,6 @@ pub unsafe fn ibv_close_xrcd(xrcd: *mut ibv_xrcd) -> ::std::os::raw::c_int {
     let vctx = verbs_get_ctx((*xrcd).context);
     (*vctx).close_xrcd.unwrap()(xrcd)
 }
-
 
 /// Free a memory window.
 #[inline]
@@ -275,4 +246,3 @@ pub unsafe fn ibv_post_recv(
 ) -> ::std::os::raw::c_int {
     (*(*qp).context).ops.post_recv.unwrap()(qp, wr, bad_wr)
 }
-

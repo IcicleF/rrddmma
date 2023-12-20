@@ -1,6 +1,7 @@
 use std::env::{self, consts};
 use std::path::Path;
 use std::process::Command;
+use std::vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VerbsVersion {
@@ -80,6 +81,34 @@ fn link_ibverbs() -> Result<IbverbsLinkage, ()> {
     ))
 }
 
+/// Try to build `libibverbs` from source and link to it.
+fn link_build() -> Result<IbverbsLinkage, ()> {
+    // initialize and update submodules
+    if Path::new(".git").is_dir() {
+        Command::new("git")
+            .args(&["submodule", "update", "--init"])
+            .status()
+            .map_err(|_| ())?;
+    } else if !Path::new("vendor/rdma-core").is_dir() {
+        return Err(());
+    }
+
+    // build vendor/rdma-core
+    Command::new("bash")
+        .current_dir("vendor/rdma-core/")
+        .args(&["build.sh"])
+        .status()
+        .map_err(|_| ())?;
+
+    println!("cargo:rustc-link-search=native=vendor/rdma-core/build/lib");
+    println!("cargo:rustc-link-lib=ibverbs");
+
+    Ok(IbverbsLinkage::new(
+        VerbsVersion::V5,
+        vec!["vendor/rdma-core/libibverbs".to_owned()],
+    ))
+}
+
 /// Build flow:
 ///
 /// 1. Try to link to existing `MLNX_OFED` installation.
@@ -107,8 +136,13 @@ fn main() {
         return;
     }
 
-    // Build the `ibverbs` library by myself.
-    todo!("build ibverbs");
+    // Build the `ibverbs` library.
+    if let Ok(link) = link_build() {
+        gen_verb_bindings(link.ver, link.include_dirs);
+        return;
+    }
+
+    panic!("cannot link to MLNX_OFED installations, libibverbs installations, or build libibverbs from source");
 }
 
 fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
@@ -120,7 +154,7 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
         .allowlist_type("ibv_.*")
         .allowlist_type("verbs_.*")
         .allowlist_type("ib_uverbs_access_flags")
-        .opaque_type("pthread_.*")
+        .blocklist_type("pthread_.*")
         .blocklist_type("in6_addr")
         .blocklist_type("sockaddr.*")
         .blocklist_type("timespec")
@@ -129,8 +163,7 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
         .blocklist_type("ibv_flow_spec")
         .blocklist_type("ibv_gid")
         .blocklist_type("ibv_global_route")
-        .blocklist_type("ibv_mw_bind_info")
-        .blocklist_type("ibv_send_wr")
+        .blocklist_type("ibv_send_wr.*")
         .blocklist_type("ibv_wc")
         .bitfield_enum("ibv_device_cap_flags")
         .bitfield_enum("ibv_odp_transport_cap_bits")
@@ -190,7 +223,8 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
         .constified_enum_module("ibv_flow_spec_type")
         .constified_enum_module("ibv_counter_description")
         .constified_enum_module("ibv_rereg_mr_err_code")
-        .constified_enum_module("ib_uverbs_advise_mr_advice");
+        .constified_enum_module("ib_uverbs_advise_mr_advice")
+        .rustified_enum("ibv_event_type");
 
     match ver {
         VerbsVersion::V4 => {
@@ -198,11 +232,16 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
 
             // `ibv_exp_*` bindings
             builder = builder
+                .blocklist_type("ibv_exp_send_wr.*")
                 .bitfield_enum("verbs_context_mask")
                 .bitfield_enum("ibv_exp_device_cap_flags")
                 .bitfield_enum("ibv_exp_device_attr_comp_mask")
                 .bitfield_enum("ibv_exp_device_attr_comp_mask2")
                 .constified_enum_module("ibv_exp_atomic_cap")
+                .constified_enum_module("ibv_exp_wr_opcode")
+                .constified_enum_module("ibv_exp_calc_op")
+                .constified_enum_module("ibv_exp_calc_data_type")
+                .constified_enum_module("ibv_exp_calc_data_size")
                 .constified_enum_module("ibv_exp_dm_memcpy_dir")
                 .bitfield_enum("ibv_exp_roce_gid_type");
         }
@@ -218,14 +257,13 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
 
     let bindings = builder
         .derive_copy(true)
-        .derive_debug(false)
+        .derive_debug(true)
         .derive_default(true)
         .generate_comments(true)
         .layout_tests(false)
         .prepend_enum_name(false)
         .size_t_is_usize(true)
         .disable_untagged_union()
-        .rustified_enum("ibv_event_type")
         .generate()
         .expect("failed to generate bindings");
 

@@ -48,11 +48,11 @@ impl Drop for CqInner {
 
 /// Completion queue.
 pub struct Cq {
-    /// CQ body.
-    inner: Arc<CqInner>,
-
     /// Cached CQ pointer.
     cq: IbvCq,
+
+    /// CQ body.
+    inner: Arc<CqInner>,
 }
 
 impl Cq {
@@ -99,7 +99,7 @@ impl Cq {
     }
 
     /// Get the underlying [`ibv_cq`] pointer.
-    pub fn as_raw(&self) -> *mut ibv_cq {
+    pub(crate) fn as_raw(&self) -> *mut ibv_cq {
         self.cq.as_ptr()
     }
 
@@ -258,7 +258,7 @@ impl Cq {
     ///
     /// ## Panics
     ///
-    /// Panics if the work completion status is not success.
+    /// Panic if the work completion status is not success.
     pub fn poll_one_blocking_consumed(&self) {
         // SAFETY: `ibv_wc` is POD type.
         let mut wc: ibv_wc = unsafe { mem::zeroed() };

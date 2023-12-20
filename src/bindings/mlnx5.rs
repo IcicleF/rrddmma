@@ -51,6 +51,29 @@ impl ibv_wc {
 }
 
 #[repr(C)]
+pub struct ibv_send_wr {
+    pub wr_id: u64,
+    pub next: *mut Self,
+    pub sg_list: *mut ibv_sge,
+    pub num_sge: c_int,
+    pub opcode: ibv_wr_opcode::Type,
+    pub send_flags: c_uint,
+    pub imm_data_invalidated_rkey_union: imm_data_invalidated_rkey_union_t,
+    pub wr: wr_t,
+    pub qp_type_xrc_remote_srq_num: qp_type_xrc_remote_srq_num_union_t,
+    pub bind_mw: mw_rkey_bind_info_union_t,
+}
+
+impl ibv_send_wr {
+    /// Set the immediate data.
+    #[inline(always)]
+    pub fn set_imm(&mut self, imm: u32) {
+        // SAFETY: union of two `u32`s.
+        unsafe { self.imm_data_invalidated_rkey_union.imm_data = imm };
+    }
+}
+
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct add_t {
     pub recv_wr_id: u64,

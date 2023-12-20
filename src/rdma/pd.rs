@@ -75,7 +75,7 @@ impl Pd {
 
     /// Get the underlying `ibv_pd` structure.
     #[inline]
-    pub fn as_raw(&self) -> *mut ibv_pd {
+    pub(crate) fn as_raw(&self) -> *mut ibv_pd {
         self.pd.as_ptr()
     }
 

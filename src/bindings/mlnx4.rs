@@ -1,6 +1,6 @@
-use libc::*;
-use super::*;
 pub use super::common::*;
+use super::*;
+use libc::*;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -20,6 +20,7 @@ pub union ibv_async_event_element_union_t {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct ibv_wc {
     pub wr_id: u64,
     pub status: ibv_wc_status::Type,
@@ -41,6 +42,29 @@ impl ibv_wc {
     #[inline(always)]
     pub fn imm(&self) -> u32 {
         self.imm_data
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ibv_send_wr {
+    pub wr_id: u64,
+    pub next: *mut Self,
+    pub sg_list: *mut ibv_sge,
+    pub num_sge: c_int,
+    pub opcode: ibv_wr_opcode::Type,
+    pub send_flags: c_uint,
+    pub imm_data: u32,
+    pub wr: wr_t,
+    pub qp_type_xrc_remote_srq_num_union: qp_type_xrc_remote_srq_num_union_t,
+    pub bind_mw: mw_rkey_bind_info_union_t,
+}
+
+impl ibv_send_wr {
+    /// Set the immediate data.
+    #[inline(always)]
+    pub fn set_imm(&mut self, imm: u32) {
+        self.imm_data = imm;
     }
 }
 
@@ -111,6 +135,156 @@ pub unsafe fn ibv_alloc_mw(pd: *mut ibv_pd, type_: ibv_mw_type::Type) -> *mut ib
         *__errno_location() = ENOSYS;
         std::ptr::null_mut()
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union imm_data_invalidated_rkey_union_t {
+    pub imm_data: u32,
+    pub invalidated_rkey: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct cqe_wait_t {
+    pub cq: *mut ibv_cq,
+    pub cq_count: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct wqe_enable_t {
+    pub qp: *mut ibv_qp,
+    pub wqe_count: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union task_t {
+    pub rdma: rdma_t,
+    pub atomic: atomic_t,
+    pub cqe_wait: cqe_wait_t,
+    pub wqe_enable: wqe_enable_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct calc_t {
+    pub calc_op: ibv_exp_calc_op::Type,
+    pub data_type: ibv_exp_calc_data_type::Type,
+    pub data_size: ibv_exp_calc_data_size::Type,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union calc_op_t {
+    pub calc: calc_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct dc_t {
+    pub ah: *mut ibv_ah,
+    pub dct_access_key: u64,
+    pub dct_number: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct exp_bind_mw_t {
+    pub mw: *mut ibv_mw,
+    pub rkey: u32,
+    pub bind_info: ibv_exp_mw_bind_info,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union bind_mw_tso_union_t {
+    pub bind_mw: exp_bind_mw_t,
+    pub tso: tso_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct rb_t {
+    pub mem_repeat_block_list: *mut ibv_exp_mem_repeat_block,
+    pub repeat_count: *mut size_t,
+    pub stride_dim: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union mem_list_t {
+    pub mem_reg_list: *mut ibv_exp_mem_region,
+    pub rb: rb_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct umr_t {
+    pub umr_type: u32,
+    pub memory_objects: *mut ibv_exp_mkey_list_container,
+    pub exp_access: u64,
+    pub modified_mr: *mut ibv_mr,
+    pub base_addr: u64,
+    pub num_mrs: u32,
+    pub mem_list: mem_list_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union inline_data_op_t {
+    pub cmp_swap: ibv_exp_cmp_swap,
+    pub fetch_add: ibv_exp_fetch_add,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct inline_data_t {
+    pub op: inline_data_op_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union wr_data_t {
+    pub inline_data: inline_data_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct masked_atomics_t {
+    pub log_arg_sz: u32,
+    pub remote_addr: u64,
+    pub rkey: u32,
+    pub wr_data: wr_data_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union ext_op_t {
+    pub umr: umr_t,
+    pub masked_atomics: masked_atomics_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ibv_exp_send_wr {
+    pub wr_id: u64,
+    pub next: *mut Self,
+    pub sg_list: *mut ibv_sge,
+    pub num_sge: c_int,
+    pub exp_opcode: ibv_exp_wr_opcode::Type,
+    pub reserved: c_int,
+    pub ex: imm_data_invalidated_rkey_union_t,
+    pub wr: wr_t,
+    pub qp_type_xrc_remote_srq_num_union: qp_type_xrc_remote_srq_num_union_t,
+    pub task: task_t,
+    pub op: calc_op_t,
+    pub dc: dc_t,
+    pub bind_mw_tso_union: bind_mw_tso_union_t,
+    pub exp_send_flags: u64,
+    pub comp_mask: u32,
+    pub ext_op: ext_op_t,
 }
 
 #[inline]

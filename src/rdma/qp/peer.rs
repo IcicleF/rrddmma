@@ -68,14 +68,14 @@ impl Drop for QpPeerInner {
 
 /// Remote peer information that can be used in sends.
 pub struct QpPeer {
-    /// Peer information body.
-    inner: Arc<QpPeerInner>,
-
     /// Cached address handle pointer.
     ah: IbvAh,
 
     /// Cached QPN.
     qpn: Qpn,
+
+    /// Peer information body.
+    inner: Arc<QpPeerInner>,
 }
 
 impl fmt::Debug for QpPeer {
@@ -120,12 +120,6 @@ impl QpPeer {
             ah,
             qpn,
         })
-    }
-
-    /// Get the underlying [`ibv_ah`] pointer.
-    #[inline]
-    pub fn as_raw(&self) -> *mut ibv_ah {
-        self.ah.as_ptr()
     }
 
     /// Get the endpoint data of this peer.

@@ -153,7 +153,7 @@ impl NicFinder {
     ///
     /// # Panic
     ///
-    /// Panics if `num` is 0.
+    /// Panic if `num` is 0.
     #[inline]
     pub fn port_num(mut self, num: u8) -> Self {
         assert!(num > 0, "port number must be positive");

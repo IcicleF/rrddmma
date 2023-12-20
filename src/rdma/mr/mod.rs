@@ -121,12 +121,6 @@ impl Mr {
         })
     }
 
-    /// Get the underlying `ibv_mr` structure.
-    #[inline]
-    pub fn as_raw(&self) -> *mut ibv_mr {
-        self.mr.as_ptr()
-    }
-
     /// Get the local key of the memory region.
     #[inline]
     pub fn lkey(&self) -> u32 {

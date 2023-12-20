@@ -81,3 +81,10 @@ impl From<MrSlice<'_>> for MrRemote {
         }
     }
 }
+
+impl From<&'_ MrRemote> for rdma_t {
+    #[inline]
+    fn from(remote: &'_ MrRemote) -> Self {
+        remote.as_rdma_t()
+    }
+}

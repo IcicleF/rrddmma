@@ -171,7 +171,7 @@ impl Port {
     ///
     /// # Panics
     ///
-    /// Panics if no GIDs are found.
+    /// Panic if no GIDs are found.
     pub fn recommended_gid(&self) -> (GidTyped, u8) {
         use std::cmp::Ordering;
 

@@ -15,7 +15,7 @@ pub use self::peer::*;
 pub use self::state::*;
 pub use self::ty::*;
 use crate::bindings::*;
-use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, type_alias::*, wr::*};
+use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, type_alias::*};
 use crate::utils::{interop::*, select::*};
 
 /// Wrapper for `*mut ibv_qp`.
@@ -94,11 +94,11 @@ impl Drop for QpInner {
 
 /// Queue pair.
 pub struct Qp {
-    /// Queue pair body.
-    inner: Arc<QpInner>,
-
     /// Cached queue pair pointer.
     qp: IbvQp,
+
+    /// Queue pair body.
+    inner: Arc<QpInner>,
 
     /// Local port that this QP is bound to.
     local_port: Option<(Port, GidIndex)>,
@@ -304,7 +304,7 @@ impl Qp {
 
     /// Get the underlying `ibv_qp` pointer.
     #[inline]
-    pub fn as_raw(&self) -> *mut ibv_qp {
+    pub(crate) fn as_raw(&self) -> *mut ibv_qp {
         self.qp.as_ptr()
     }
 
@@ -409,24 +409,25 @@ impl Qp {
     /// Will modify the QP to RTS state if it is an connected QP at RESET state
     /// and already bound to a local port.
     ///
+    /// If the QP is UD, this method will not modify the QP. Instead, it sets
+    /// the default target for all sends.
+    ///
     /// This method is *not* commutative with [`Self::bind_local_port()`].
     /// You must bind the QP to a local port before binding it to a remote peer.
     ///
     /// # Panics
     ///
-    /// - Panic if the QP type is unreliable datagram.
     /// - Panic if the QP is not yet bound to a local port.
-    /// - Panic if the QP is already bound to a remote peer.
+    /// - Panic if the QP is connected and already bound to a remote peer.
     pub fn bind_peer(&mut self, ep: QpEndpoint) -> io::Result<()> {
-        assert!(
-            self.qp_type().is_connected(),
-            "cannot bind UD/RawPacket QP to remote peers"
-        );
         assert!(
             self.local_port.is_some(),
             "QP not yet bound to a local port"
         );
-        assert!(self.peer.is_none(), "QP already bound to a remote peer");
+        assert!(
+            !(self.qp_type().is_connected() && self.peer.is_some()),
+            "QP already bound to a remote peer"
+        );
 
         self.peer = Some(QpPeer::new(
             self.pd(),
@@ -435,9 +436,11 @@ impl Qp {
         )?);
 
         // Bring up QP.
-        self.modify_reset2init()?;
-        self.modify_init2rtr()?;
-        self.modify_rtr2rts()?;
+        if self.qp_type().is_connected() {
+            self.modify_reset2init()?;
+            self.modify_init2rtr()?;
+            self.modify_rtr2rts()?;
+        }
         Ok(())
     }
 
@@ -460,46 +463,6 @@ impl Qp {
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_recv(self.as_raw(), &mut wr, &mut bad_wr)
-        };
-        from_c_ret_explained(ret, Self::recv_err_explanation)
-    }
-
-    /// Post a list of receive work requests to the queue pair in order.
-    /// This enables doorbell batching and can reduce doorbell ringing overheads.
-    #[inline]
-    pub fn post_recv(&self, ops: &[RecvWr]) -> io::Result<()> {
-        // Do nothing if no work requests are to be posted.
-        if ops.is_empty() {
-            return Ok(());
-        }
-
-        // Safety: we only hold references to the `RecvWr`s, whose lifetimes
-        // can only outlive this function. `ibv_post_recv` is used inside this
-        // function, so the work requests are guaranteed to be valid.
-        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
-        for i in 0..(wrs.len() - 1) {
-            wrs[i].next = &mut wrs[i + 1];
-        }
-
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.as_raw(), wrs.as_mut_ptr(), &mut bad_wr)
-        };
-        from_c_ret_explained(ret, Self::recv_err_explanation)
-    }
-
-    /// Post a list of raw receive work requests.
-    /// This enables doorbell batching and can reduce doorbell ringing overheads.
-    ///
-    /// # Safety
-    ///
-    /// - Every work request must refer to valid memory address.
-    /// - `head` must lead a valid chain of work requests of valid length.
-    #[inline]
-    pub unsafe fn post_raw_recv(&self, head: &RawRecvWr) -> io::Result<()> {
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_recv(self.as_raw(), &head.1 as *const _ as *mut _, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::recv_err_explanation)
     }
@@ -760,45 +723,6 @@ impl Qp {
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
-        };
-        from_c_ret_explained(ret, Self::send_err_explanation)
-    }
-
-    /// Post a list of send work requests to the queue pair in order.
-    /// This enables doorbell batching and can reduce doorbell ringing overheads.
-    #[inline]
-    pub fn post_send(&self, ops: &[SendWr<'_>]) -> io::Result<()> {
-        if ops.is_empty() {
-            return Ok(());
-        }
-
-        // Safety: we only hold references to the `SendWr`s, whose lifetimes
-        // can only outlive this function. `ibv_post_send` is used inside this
-        // function, so the work requests are guaranteed to be valid.
-        let mut wrs = ops.iter().map(|op| op.to_wr()).collect::<Vec<_>>();
-        for i in 0..(wrs.len() - 1) {
-            unsafe {
-                wrs.get_unchecked_mut(i).next = wrs.get_unchecked_mut(i + 1);
-            }
-        }
-
-        let mut bad_wr = ptr::null_mut();
-        let ret = unsafe { ibv_post_send(self.as_raw(), wrs.as_mut_ptr(), &mut bad_wr) };
-        from_c_ret_explained(ret, Self::send_err_explanation)
-    }
-
-    /// Post a list of raw send work requests.
-    /// This enables doorbell batching and can reduce doorbell ringing overheads.
-    ///
-    /// # Safety
-    ///
-    /// - Every work request must refer to valid memory address.
-    /// - `head` must lead a valid chain of work requests of valid length.
-    #[inline]
-    pub unsafe fn post_raw_send(&self, head: &RawSendWr) -> io::Result<()> {
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.as_raw(), &head as *const _ as *mut _, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }

@@ -62,11 +62,11 @@ impl Drop for ContextInner {
 
 /// Device context.
 pub struct Context {
-    /// Context body.
-    inner: Arc<ContextInner>,
-
     /// Cached context pointer.
     ctx: IbvContext,
+
+    /// Context body.
+    inner: Arc<ContextInner>,
 }
 
 impl Context {
@@ -90,7 +90,7 @@ impl Context {
 impl Context {
     /// Get the underlying [`ibv_context`] pointer.
     #[inline]
-    pub fn as_raw(&self) -> *mut ibv_context {
+    pub(crate) fn as_raw(&self) -> *mut ibv_context {
         self.ctx.as_ptr()
     }
 
@@ -105,7 +105,7 @@ impl AsRawFd for Context {
     /// Get the `cmd_fd` of the context.
     fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
         // SAFETY: the underlying `ibv_context` is valid.
-        let ibv_ctx = &unsafe { *self.ctx.as_ref() };
+        let ibv_ctx = unsafe { self.ctx.as_ref() };
         ibv_ctx.cmd_fd
     }
 }
