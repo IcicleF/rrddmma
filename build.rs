@@ -98,10 +98,7 @@ fn link_build() -> Result<IbverbsLinkage, ()> {
         .current_dir("vendor/rdma-core/")
         .arg("build.sh")
         .env("CFLAGS", "-fPIC")
-        .env(
-            "EXTRA_CMAKE_FLAGS",
-            "-DENABLE_STATIC=1 -DRDMA_STATIC_PROVIDERS=mlx5",
-        )
+        .env("EXTRA_CMAKE_FLAGS", "-DENABLE_STATIC=1")
         .status()
         .map_err(|_| ())?;
 
