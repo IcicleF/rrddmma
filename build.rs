@@ -98,16 +98,23 @@ fn link_build() -> Result<IbverbsLinkage, ()> {
         .current_dir("vendor/rdma-core/")
         .arg("build.sh")
         .env("CFLAGS", "-fPIC")
-        .env("EXTRA_CMAKE_FLAGS", "-DENABLE_STATIC=1")
+        .env(
+            "EXTRA_CMAKE_FLAGS",
+            "-DENABLE_STATIC=1 -DRDMA_STATIC_PROVIDERS=mlx5",
+        )
         .status()
         .map_err(|_| ())?;
 
     // Link to static library, otherwise dylibs cannot be found when used as
     // a dependency.
     pkg_config::Config::new()
+        .atleast_version("3.4.0")
+        .statik(false)
         .probe("libnl-3.0")
         .map_err(|_| ())?;
     pkg_config::Config::new()
+        .atleast_version("3.4.0")
+        .statik(false)
         .probe("libnl-route-3.0")
         .map_err(|_| ())?;
 
@@ -116,6 +123,10 @@ fn link_build() -> Result<IbverbsLinkage, ()> {
         cur_dir.join("vendor/rdma-core/build/lib").display()
     );
     println!("cargo:rustc-link-lib=static=ibverbs");
+    println!("cargo:rustc-link-lib=static=mlx5");
+
+    // Static linkage requires customized provider registration.
+    println!("cargo:rustc-cfg=manual_mlx5");
 
     Ok(IbverbsLinkage::new(
         VerbsVersion::V5,
@@ -181,6 +192,7 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
         .blocklist_type("ibv_global_route")
         .blocklist_type("ibv_send_wr.*")
         .blocklist_type("ibv_wc")
+        .blocklist_function("ibv_get_device_list")
         .bitfield_enum("ibv_device_cap_flags")
         .bitfield_enum("ibv_odp_transport_cap_bits")
         .bitfield_enum("ibv_odp_general_caps")

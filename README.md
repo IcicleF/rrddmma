@@ -6,34 +6,33 @@
 [![Crates.io](https://img.shields.io/crates/d/rrddmma)](https://crates.io/crates/rrddmma)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE-MIT)
 
+This library is more for academic use than for industry.
+It is highly specialized to Mellanox/NVIDIA ConnectX network adapter series.
+
 
 ## Linkage
 
-1.  `rrddmma` respects existing [MLNX_OFED](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/) installations.
+This library supports multiple linkage types to the `ibverbs` library.
 
-    - MLNX_OFED v4.9-x LTS installations will enable `ibv_exp_*` features.
-      Its installations is assumed to be in `/usr/include` (headers) and `/usr/lib` (static & dynamic libraries).
-      You may specify these paths via `MLNX_OFED_INCLUDE_DIR` and `MLNX_OFED_LIB_DIR` environment variables.
-    - MLNX_OFED v5.x installations will enable `mlx5dv_*` features.
+1.  First, this library respects existing [MLNX_OFED](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/) installations.
+    It works on both v4.9-x and v5.x versions.
+    - ~~MLNX_OFED v4.9-x will enable experimental verbs.~~ (TODO)
+    - ~~MLNX_OFED v5.x will enable `mlx5dv_*` features.~~ (TODO)
 
 2.  Otherwise, `rrddmma` will try to find an existing `libibverbs` installation via `pkg-config`.
-    If this approach is taken, `rrddmma` will respect provider-specific functionalities.
-
-    - `mlx5` provider will enable `mlx5dv_*` features.
+    - ~~This will enable enable `mlx5dv_*` features.~~ (TODO)
 
 3.  Otherwise, `rrddmma` will try to download [rdma-core](https://github.com/linux-rdma/rdma-core) and build from source.
-    If this approach is taken, only `libibverbs` interfaces are supported.
-    Also, you need to ensure that the dependencies are properly installed.
+    You need to ensure that the dependencies are properly installed.
     In Ubuntu and other Debian-derived OSs, these are:
 
     ```shell
-    sudo apt install -y build-essential cmake gcc libclang-dev libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
+    sudo apt install -y build-essential cmake gcc libclang-dev libudev-dev libsystemd-dev \
+                        libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind \
+                        python3-dev cython3 python3-docutils pandoc
     ```
 
+    Building from source is different from the previous two approaches in that `libibverbs` is linked statically and cannot detect providers at runtime.
+    This library currently only allows the `mlx5` provider.
+    - ~~This will enable enable `mlx5dv_*` features.~~ (TODO)
 
-## Implementation
-
-Beneath the interfaces exposed, every data structure maintains allocated `ibv_*` resources with an `Arc` if there are any.
-As a result, such data structures can always be cloned.
-Although this seems to introduce an unnecessary extra layer of indirection, it will also significantly relieve the programmer's
-stress when they need to share the resources among threads.
