@@ -75,7 +75,6 @@ impl Default for QpCaps {
 }
 
 /// Queue pair builder.
-/// Contains essential attributes in [`ibv_qp_init_attr`].
 #[derive(Clone)]
 pub struct QpBuilder<'a> {
     /// Send completion queue for this QP.

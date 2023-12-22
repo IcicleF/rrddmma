@@ -1,3 +1,5 @@
+//! Common type aliases.
+
 /// [`u8`]: **Port number**, identifies a port on a local switch or an HCA.
 pub type PortNum = u8;
 

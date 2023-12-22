@@ -1,3 +1,5 @@
+//! Protection domain.
+
 use std::io::{self, Error as IoError};
 use std::ptr::NonNull;
 use std::sync::Arc;

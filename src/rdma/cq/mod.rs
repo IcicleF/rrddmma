@@ -1,3 +1,5 @@
+//! Completion queue and Work completion.
+
 mod wc;
 
 use std::io::{self, Error as IoError};

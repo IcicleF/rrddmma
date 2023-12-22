@@ -130,7 +130,7 @@ impl QpPeer {
 
     /// Generate a [`ud_t`] instance for RDMA sends to this peer.
     #[inline]
-    pub fn ud(&self) -> ud_t {
+    pub(crate) fn ud(&self) -> ud_t {
         ud_t {
             ah: self.ah.as_ptr(),
             remote_qpn: self.qpn,

@@ -9,6 +9,7 @@
 This library is more for academic use than for industry.
 It is highly specialized to Mellanox/NVIDIA ConnectX network adapter series.
 
+**WARNING: the interfaces are unstable and under continuous change!**
 
 ## Linkage
 

@@ -1,3 +1,5 @@
+//! Memory region (local and remote) and related types.
+
 mod mr_slice;
 mod perm;
 mod remote;

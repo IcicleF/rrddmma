@@ -1,3 +1,5 @@
+//! Queue pair and related types.
+
 mod builder;
 mod peer;
 mod state;

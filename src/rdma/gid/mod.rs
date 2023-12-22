@@ -1,3 +1,5 @@
+//! Device GID and related types.
+
 mod raw;
 mod typed;
 

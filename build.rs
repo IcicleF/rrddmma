@@ -86,7 +86,7 @@ fn link_build() -> Result<IbverbsLinkage, ()> {
     let cur_dir = env::current_dir().map_err(|_| ())?;
     if cur_dir.join(".git").is_dir() {
         Command::new("git")
-            .args(&["submodule", "update", "--init"])
+            .args(["submodule", "update", "--init"])
             .status()
             .map_err(|_| ())?;
     } else if !cur_dir.join("vendor/rdma-core").is_dir() {

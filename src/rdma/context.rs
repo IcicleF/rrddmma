@@ -1,3 +1,5 @@
+//! Device context.
+
 use std::io;
 use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
