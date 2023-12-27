@@ -87,8 +87,8 @@ impl fmt::Debug for QpPeer {
 }
 
 impl QpPeer {
-    /// Create a new peer
-    pub(crate) fn new(pd: &Pd, sgid_index: u8, ep: QpEndpoint) -> io::Result<Self> {
+    /// Create a new peer.
+    pub(crate) fn new(pd: &Pd, sgid_index: GidIndex, ep: QpEndpoint) -> io::Result<Self> {
         let mut ah_attr = ibv_ah_attr {
             grh: ibv_global_route {
                 dgid: ep.gid.into(),
@@ -122,12 +122,6 @@ impl QpPeer {
         })
     }
 
-    /// Get the endpoint data of this peer.
-    #[inline]
-    pub fn endpoint(&self) -> &QpEndpoint {
-        &self.inner.ep
-    }
-
     /// Generate a [`ud_t`] instance for RDMA sends to this peer.
     #[inline]
     pub(crate) fn ud(&self) -> ud_t {
@@ -136,5 +130,19 @@ impl QpPeer {
             remote_qpn: self.qpn,
             remote_qkey: Qp::GLOBAL_QKEY,
         }
+    }
+}
+
+impl QpPeer {
+    /// Get the endpoint data of this peer.
+    #[inline]
+    pub fn endpoint(&self) -> &QpEndpoint {
+        &self.inner.ep
+    }
+
+    /// Fill in a send work request for UD sending to this peer.
+    #[inline]
+    pub fn set_ud_peer(&self, wr: &mut ibv_send_wr) {
+        wr.wr.ud = self.ud();
     }
 }

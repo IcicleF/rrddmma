@@ -277,20 +277,24 @@ pub enum PortMtu {
     Mtu4096 = ibv_mtu::IBV_MTU_4096 as _,
 }
 
+impl PortMtu {
+    /// Get the MTU size in bytes.
+    #[inline]
+    pub fn bytes(&self) -> usize {
+        match self {
+            Self::Mtu256 => 256,
+            Self::Mtu512 => 512,
+            Self::Mtu1024 => 1024,
+            Self::Mtu2048 => 2048,
+            Self::Mtu4096 => 4096,
+        }
+    }
+}
+
 impl Display for PortMtu {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}B",
-            match self {
-                Self::Mtu256 => 256,
-                Self::Mtu512 => 512,
-                Self::Mtu1024 => 1024,
-                Self::Mtu2048 => 2048,
-                Self::Mtu4096 => 4096,
-            }
-        )
+        write!(f, "{}B", self.bytes())
     }
 }
 

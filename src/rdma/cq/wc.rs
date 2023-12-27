@@ -1,4 +1,4 @@
-use std::{fmt, mem, ptr};
+use std::{fmt, hint, mem, ptr};
 
 use thiserror::Error;
 
@@ -213,14 +213,22 @@ const WCSTATUS_UPPER_BOUND: u32 = ibv_wc_status::IBV_WC_GENERAL_ERR;
 #[cfg(mlnx5)]
 const WCSTATUS_UPPER_BOUND: u32 = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE;
 
-/// For better performance, the cast from `u32` to `WcStatus` is implemented as
-/// a direct `mem::transmute` for valid values from 0 to 23 instead of a verbose
-/// `match` statement for each possibility.
+impl WcStatus {
+    /// Cast `ibv_wc_status` into `WcStatus`.
+    #[inline]
+    pub(crate) unsafe fn from_unsafe(wc_status: ibv_wc_status::Type) -> Self {
+        match wc_status {
+            x if x <= WCSTATUS_UPPER_BOUND => mem::transmute(x),
+            _ => hint::unreachable_unchecked(),
+        }
+    }
+}
+
 impl From<u32> for WcStatus {
     fn from(wc_status: u32) -> Self {
         match wc_status {
-            // SAFETY: Valid status codes in [`ibv_wc_status`] are contiguous.
-            x if x <= WCSTATUS_UPPER_BOUND => unsafe { std::mem::transmute(x) },
+            // SAFETY: Valid status codes in `ibv_wc_status` are contiguous.
+            x if x <= WCSTATUS_UPPER_BOUND => unsafe { mem::transmute(x) },
             x => panic!("invalid wc status: {}", x),
         }
     }
@@ -246,7 +254,8 @@ impl Wc {
     /// Get the completion status.
     #[inline]
     pub fn status(&self) -> WcStatus {
-        WcStatus::from(self.0.status)
+        // SAFETY: SAFETY: enum constraints of `libibverbs`.
+        unsafe { WcStatus::from_unsafe(self.0.status) }
     }
 
     /// Get the completion status as a `Result`.
@@ -256,7 +265,7 @@ impl Wc {
     #[inline]
     pub fn ok(&self) -> Result<usize, WcStatus> {
         match self.status() {
-            WcStatus::Success => Ok(self.0.byte_len as usize),
+            WcStatus::Success => Ok(self.bytes()),
             _ => Err(self.status()),
         }
     }
@@ -295,7 +304,7 @@ impl Default for Wc {
     /// Create a zeroed work completion entry.
     fn default() -> Self {
         // SAFETY: zero-initializing a POD type is safe.
-        unsafe { std::mem::zeroed() }
+        unsafe { mem::zeroed() }
     }
 }
 

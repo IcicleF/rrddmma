@@ -78,19 +78,19 @@ impl Default for QpCaps {
 #[derive(Clone)]
 pub struct QpBuilder<'a> {
     /// Send completion queue for this QP.
-    pub send_cq: Option<&'a Cq>,
+    pub(super) send_cq: Option<&'a Cq>,
 
     /// Receive completion queue for this QP. Can be the same to send CQ.
-    pub recv_cq: Option<&'a Cq>,
+    pub(super) recv_cq: Option<&'a Cq>,
 
     /// Capabilities of this QP.
-    pub caps: QpCaps,
+    pub(super) caps: QpCaps,
 
     /// Queue pair type.
-    pub qp_type: Option<QpType>,
+    pub(super) qp_type: Option<QpType>,
 
     /// Whether to signal for all send work requests.
-    pub sq_sig_all: Option<bool>,
+    pub(super) sq_sig_all: Option<bool>,
 }
 
 impl<'a> QpBuilder<'a> {

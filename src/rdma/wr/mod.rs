@@ -1,3 +1,5 @@
+//! Work request wrappers.
+
 mod recv;
 mod send;
 

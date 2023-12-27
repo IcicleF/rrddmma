@@ -139,6 +139,12 @@ pub use self::private::ibv_destroy_cq;
 /// Completion queue.
 pub use self::private::ibv_cq;
 
+/// Poll for work completions.
+pub use self::private::ibv_poll_cq;
+
+/// Work completion.
+pub use self::private::ibv_wc;
+
 /// Register a memory region.
 pub use self::private::ibv_reg_mr;
 
@@ -147,6 +153,9 @@ pub use self::private::ibv_dereg_mr;
 
 /// Memory region.
 pub use self::private::ibv_mr;
+
+/// Memory region permissions.
+pub use self::private::ibv_access_flags;
 
 /// Create a queue pair.
 pub use self::private::ibv_create_qp;
@@ -163,6 +172,9 @@ pub use self::private::ibv_qp_init_attr;
 /// Queue pair capabilities.
 pub use self::private::ibv_qp_cap;
 
+/// Queue pair type.
+pub use self::private::ibv_qp_type;
+
 /// Modify the queue pair state.
 pub use self::private::ibv_modify_qp;
 
@@ -172,10 +184,22 @@ pub use self::private::ibv_query_qp;
 /// Queue pair attributes.
 pub use self::private::ibv_qp_attr;
 
+/// Queue pair state.
+pub use self::private::ibv_qp_state;
+
 pub use self::private::ibv_post_send;
 
 /// Send work request.
 pub use self::private::ibv_send_wr;
+
+/// Scatter-gather entry.
+pub use self::private::ibv_sge;
+
+/// Send flags.
+pub use self::private::ibv_send_flags;
+
+/// Send opcode.
+pub use self::private::ibv_wr_opcode;
 
 pub use self::private::ibv_post_recv;
 

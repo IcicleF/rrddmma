@@ -101,7 +101,7 @@ impl Cq {
     }
 
     /// Get the underlying [`ibv_cq`] pointer.
-    pub(crate) fn as_raw(&self) -> *mut ibv_cq {
+    pub fn as_raw(&self) -> *mut ibv_cq {
         self.cq.as_ptr()
     }
 

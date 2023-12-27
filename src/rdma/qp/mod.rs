@@ -175,8 +175,21 @@ impl Qp {
         Ok(qp)
     }
 
-    /// Modify the queue pair from Reset to Init.
+    /// Modify the queue pair to RESET.
+    fn modify_2reset(&self) -> io::Result<()> {
+        // SAFETY: POD type.
+        let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
+        let attr_mask = ibv_qp_attr_mask::IBV_QP_STATE;
+        attr.qp_state = ibv_qp_state::IBV_QPS_RESET;
+
+        // SAFETY: FFI.
+        let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
+        from_c_ret(ret)
+    }
+
+    /// Modify the queue pair from RESET to INIT.
     fn modify_reset2init(&self) -> io::Result<()> {
+        // SAFETY: POD type.
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE
             | ibv_qp_attr_mask::IBV_QP_PKEY_INDEX
@@ -196,12 +209,14 @@ impl Qp {
             attr.qkey = Self::GLOBAL_QKEY;
         }
 
+        // SAFETY: FFI.
         let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
         from_c_ret(ret)
     }
 
-    /// Modify the queue pair from Init to RTR.
+    /// Modify the queue pair from INIT to RTR.
     fn modify_init2rtr(&self) -> io::Result<()> {
+        // SAFETY: POD type.
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE;
         attr.qp_state = ibv_qp_state::IBV_QPS_RTR;
@@ -237,12 +252,14 @@ impl Qp {
                 | ibv_qp_attr_mask::IBV_QP_MIN_RNR_TIMER;
         }
 
+        // SAFETY: FFI.
         let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
         from_c_ret(ret)
     }
 
     /// Modify the queue pair from RTR to RTS.
     fn modify_rtr2rts(&self) -> io::Result<()> {
+        // SAFETY: POD type.
         let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
         let mut attr_mask = ibv_qp_attr_mask::IBV_QP_STATE | ibv_qp_attr_mask::IBV_QP_SQ_PSN;
         attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
@@ -260,6 +277,7 @@ impl Qp {
                 | ibv_qp_attr_mask::IBV_QP_RNR_RETRY;
         }
 
+        // SAFETY: FFI.
         let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
         from_c_ret(ret)
     }
@@ -306,7 +324,7 @@ impl Qp {
 
     /// Get the underlying `ibv_qp` pointer.
     #[inline]
-    pub(crate) fn as_raw(&self) -> *mut ibv_qp {
+    pub fn as_raw(&self) -> *mut ibv_qp {
         self.qp.as_ptr()
     }
 
@@ -444,6 +462,26 @@ impl Qp {
             self.modify_rtr2rts()?;
         }
         Ok(())
+    }
+
+    /// Reset the QP.
+    /// Modify the QP to RESET state and clear any local port or remote peer
+    /// bindings.
+    pub fn reset(&mut self) -> io::Result<()> {
+        self.modify_2reset()?;
+        self.local_port.take();
+        self.peer.take();
+        Ok(())
+    }
+
+    /// Create a new peer that is reachable from this QP.
+    /// The QP must be bound to a local port.
+    ///
+    /// # Panics
+    ///
+    /// Panic if this QP is not bound to a local port.
+    pub fn make_peer(&self, ep: &QpEndpoint) -> io::Result<QpPeer> {
+        QpPeer::new(self.pd(), self.local_port.as_ref().unwrap().1, ep.clone())
     }
 
     /// Post a RDMA recv request.
@@ -725,6 +763,40 @@ impl Qp {
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+
+    /// Post a list of recv work requests without any checks.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the work request list is valid, including:
+    /// - all work request entries in the linked list
+    /// - length of the work request list
+    /// - scatter/gather lists and their lengths
+    #[inline(always)]
+    pub unsafe fn post_raw_recv(&self, wr: &ibv_recv_wr) -> io::Result<()> {
+        let ret = {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_recv(self.as_raw(), wr as *const _ as *mut _, &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::recv_err_explanation)
+    }
+
+    /// Post a list of send-type work requests without any checks.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the work request list is valid, including:
+    /// - all work request entries in the linked list
+    /// - length of the work request list
+    /// - scatter/gather lists and their lengths
+    #[inline(always)]
+    pub unsafe fn post_raw_send(&self, wr: &ibv_send_wr) -> io::Result<()> {
+        let ret = {
+            let mut bad_wr = ptr::null_mut();
+            ibv_post_send(self.as_raw(), wr as *const _ as *mut _, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
