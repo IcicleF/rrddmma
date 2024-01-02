@@ -122,9 +122,10 @@ impl QpPeer {
         })
     }
 
-    /// Generate a [`ud_t`] instance for RDMA sends to this peer.
+    /// Return a handle that can be used in RDMA sends to this peer.
+    /// The return type is opaque to the user; you may only copy assign it to [`ibv_send_wr::wr`].
     #[inline]
-    pub(crate) fn ud(&self) -> ud_t {
+    pub fn ud(&self) -> ud_t {
         ud_t {
             ah: self.ah.as_ptr(),
             remote_qpn: self.qpn,

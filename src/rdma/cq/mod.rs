@@ -265,7 +265,7 @@ impl Cq {
         // SAFETY: `ibv_wc` is POD type.
         let mut wc: ibv_wc = unsafe { mem::zeroed() };
         while unsafe { ibv_poll_cq(self.as_raw(), 1, &mut wc) } == 0 {}
-        assert_eq!(wc.status, ibv_wc_status::IBV_WC_SUCCESS);
+        assert_eq!(Wc(wc).status(), WcStatus::Success);
     }
 
     /// Blockingly poll until the given work completion buffer is filled.

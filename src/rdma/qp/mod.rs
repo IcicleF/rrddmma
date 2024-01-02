@@ -481,7 +481,7 @@ impl Qp {
     ///
     /// Panic if this QP is not bound to a local port.
     pub fn make_peer(&self, ep: &QpEndpoint) -> io::Result<QpPeer> {
-        QpPeer::new(self.pd(), self.local_port.as_ref().unwrap().1, ep.clone())
+        QpPeer::new(self.pd(), self.local_port.as_ref().unwrap().1, *ep)
     }
 
     /// Post a RDMA recv request.

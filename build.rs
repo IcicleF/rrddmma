@@ -26,9 +26,20 @@ fn link_mlnx_ofed() -> Result<IbverbsLinkage, ()> {
         .output()
         .map_err(|_| ())?;
 
-    let ver_num = output.stdout.first().ok_or(())?;
-    match *ver_num {
-        b'4' => {
+    // Parse the version number until the first '.'
+    let ver_num = output
+        .stdout
+        .iter()
+        .take_while(|&&c| c != b'.')
+        .copied()
+        .collect::<Vec<_>>();
+    let ver_num = String::from_utf8(ver_num)
+        .map_err(|_| ())?
+        .parse::<u32>()
+        .map_err(|_| ())?;
+
+    match ver_num {
+        4 => {
             // MLNX_OFED v4.9-x LTS will not register the `libibverbs` library to
             // `pkg-config`, so search for it manually.
             //
@@ -55,8 +66,9 @@ fn link_mlnx_ofed() -> Result<IbverbsLinkage, ()> {
                 Err(())
             }
         }
-        b'5' => {
+        v if v >= 5 => {
             // MLNX_OFED v5.x LTS will register the `libibverbs` library to `pkg-config`.
+            // Things are similar for the newest v23.x or higher.
             link_ibverbs()
         }
         _ => Err(()),
