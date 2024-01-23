@@ -25,6 +25,7 @@ pub union imm_data_invalidated_rkey_union_t {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct ibv_wc {
     pub wr_id: u64,
     pub status: ibv_wc_status::Type,
@@ -51,6 +52,7 @@ impl ibv_wc {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ibv_send_wr {
     pub wr_id: u64,
     pub next: *mut Self,
@@ -74,7 +76,7 @@ impl ibv_send_wr {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Clone, Copy)]
 pub struct add_t {
     pub recv_wr_id: u64,
     pub sg_list: *mut ibv_sge,
@@ -84,7 +86,7 @@ pub struct add_t {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Clone, Copy)]
 pub struct tm_t {
     pub unexpected_cnt: u32,
     pub handle: u32,
@@ -92,6 +94,7 @@ pub struct tm_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ibv_ops_wr {
     wr_id: u64,
     next: *mut Self,
