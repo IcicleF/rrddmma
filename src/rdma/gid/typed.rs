@@ -141,7 +141,7 @@ impl GidTyped {
 }
 
 impl GidTyped {
-    /// Create a new GID.
+    /// Create a typed GID.
     #[inline]
     pub fn new(gid: Gid, ty: GidType) -> Self {
         Self { gid, ty }

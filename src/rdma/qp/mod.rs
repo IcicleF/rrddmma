@@ -76,6 +76,8 @@ pub enum QpCreationError {
     IoError(#[from] io::Error),
 
     /// Specified capabilities are not supported by the device.
+    /// The three fields are for the capability name, the maximum supported
+    /// value, and the required value.
     #[error("capability not enough: {0} supports up to {1}, {2} required")]
     CapabilityNotEnough(String, u32, u32),
 }

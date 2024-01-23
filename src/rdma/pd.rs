@@ -44,8 +44,11 @@ impl Drop for PdInner {
 
 /// Protection domain.
 pub struct Pd {
-    inner: Arc<PdInner>,
+    /// Cached protection domain pointer.
     pd: IbvPd,
+
+    /// Protection domain body.
+    inner: Arc<PdInner>,
 }
 
 impl Pd {

@@ -67,6 +67,7 @@ impl Drop for QpPeerInner {
 }
 
 /// Remote peer information that can be used in sends.
+#[derive(Clone)]
 pub struct QpPeer {
     /// Cached address handle pointer.
     ah: IbvAh,

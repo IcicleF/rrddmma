@@ -7,8 +7,8 @@ mod slicing;
 
 use std::io::{self, Error as IoError};
 use std::ptr::NonNull;
-use std::slice;
 use std::sync::Arc;
+use std::{fmt, slice};
 
 pub use self::mr_slice::*;
 pub use self::perm::*;
@@ -80,21 +80,19 @@ impl Drop for MrInner {
 /// Local memory region.
 ///
 /// A memory region is a virtual memory space registered to the RDMA device.
-/// The registered memory itself does not belong to this type, but it must
-/// outlive this type's lifetime (`'mem`) or there can be dangling pointers.
+/// The registered memory itself does not belong to this type.
+#[derive(Clone)]
 pub struct Mr {
-    inner: Arc<MrInner>,
+    /// Cached memory region pointer.
     mr: IbvMr,
+
+    /// Memory region body.
+    inner: Arc<MrInner>,
 }
 
-impl Mr {
-    /// Make a clone of the `Arc` pointer.
-    #[allow(dead_code)]
-    pub(crate) fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            mr: self.mr,
-        }
+impl fmt::Debug for Mr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("Mr<{:p}>", self.as_raw()))
     }
 }
 

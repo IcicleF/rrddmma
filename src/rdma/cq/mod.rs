@@ -2,6 +2,7 @@
 
 mod wc;
 
+use std::fmt;
 use std::io::{self, Error as IoError};
 use std::mem::{self, MaybeUninit};
 use std::ptr::{self, NonNull};
@@ -55,6 +56,12 @@ pub struct Cq {
 
     /// CQ body.
     inner: Arc<CqInner>,
+}
+
+impl fmt::Debug for Cq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("Cq<{:p}>", self.as_raw()))
+    }
 }
 
 impl Cq {

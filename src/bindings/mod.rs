@@ -121,6 +121,9 @@ pub use self::private::ibv_query_port;
 /// Port attributes.
 pub use self::private::ibv_port_attr;
 
+/// GID.
+pub use self::private::ibv_gid;
+
 /// Allocate a protection domain.
 pub use self::private::ibv_alloc_pd;
 

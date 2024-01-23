@@ -1,4 +1,4 @@
-use std::{fmt, hint, mem, ptr};
+use std::{fmt, hint, mem};
 
 use thiserror::Error;
 
@@ -238,6 +238,7 @@ impl From<u32> for WcStatus {
 ///
 /// This structure transparently wraps an `ibv_wc` structure, representing
 /// an entry polled from the completion queue.
+#[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Wc(pub ibv_wc);
 
@@ -314,16 +315,5 @@ impl fmt::Debug for Wc {
             .field("wr_id", &self.wr_id())
             .field("status", &self.status())
             .finish()
-    }
-}
-
-impl Clone for Wc {
-    fn clone(&self) -> Self {
-        // SAFETY: byte-wise copy of a POD type is safe.
-        unsafe {
-            let mut wc = mem::zeroed();
-            ptr::copy_nonoverlapping(&self.0, &mut wc, 1);
-            Wc(wc)
-        }
     }
 }

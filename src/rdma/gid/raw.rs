@@ -15,10 +15,16 @@ unsafe impl Send for Gid {}
 unsafe impl Sync for Gid {}
 
 impl fmt::Debug for Gid {
-    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let gid = Ipv6Addr::from(*self);
         f.debug_tuple("Gid").field(&gid.to_string()).finish()
+    }
+}
+
+impl fmt::Display for Gid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let gid = Ipv6Addr::from(*self);
+        write!(f, "{}", gid.to_string())
     }
 }
 
