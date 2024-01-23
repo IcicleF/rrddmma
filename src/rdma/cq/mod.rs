@@ -50,6 +50,7 @@ impl Drop for CqInner {
 }
 
 /// Completion queue.
+#[derive(Clone)]
 pub struct Cq {
     /// Cached CQ pointer.
     cq: IbvCq,
@@ -61,16 +62,6 @@ pub struct Cq {
 impl fmt::Debug for Cq {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("Cq<{:p}>", self.as_raw()))
-    }
-}
-
-impl Cq {
-    /// Make a clone of the `Arc` pointer.
-    pub(crate) fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            cq: self.cq,
-        }
     }
 }
 

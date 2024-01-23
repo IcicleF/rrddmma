@@ -63,6 +63,7 @@ impl Drop for ContextInner {
 }
 
 /// Device context.
+#[derive(Clone)]
 pub struct Context {
     /// Cached context pointer.
     ctx: IbvContext,
@@ -77,14 +78,6 @@ impl Context {
         Self {
             inner: Arc::new(ContextInner { ctx, attr }),
             ctx,
-        }
-    }
-
-    /// Make a clone of the `Arc` pointer.
-    pub(crate) fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            ctx: self.ctx,
         }
     }
 }

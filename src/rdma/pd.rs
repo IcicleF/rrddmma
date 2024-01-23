@@ -43,22 +43,13 @@ impl Drop for PdInner {
 }
 
 /// Protection domain.
+#[derive(Clone)]
 pub struct Pd {
     /// Cached protection domain pointer.
     pd: IbvPd,
 
     /// Protection domain body.
     inner: Arc<PdInner>,
-}
-
-impl Pd {
-    /// Make a clone of the `Arc` pointer.
-    pub(crate) fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            pd: self.pd,
-        }
-    }
 }
 
 impl Pd {
