@@ -4,7 +4,7 @@ mod wc;
 
 use std::fmt;
 use std::io::{self, Error as IoError};
-use std::mem::{self, MaybeUninit};
+use std::mem::MaybeUninit;
 use std::ptr::{self, NonNull};
 use std::sync::Arc;
 
@@ -228,13 +228,10 @@ impl Cq {
     #[inline]
     pub fn poll_blocking(&self, num: u32) -> io::Result<Vec<Wc>> {
         let mut wc = <Vec<Wc>>::with_capacity(num as usize);
-
-        let mut polled = 0;
-        while polled < (num as usize) {
-            let n = self.poll_into(&mut wc[polled..])?;
-            polled += n as usize;
+        while wc.len() < (num as usize) {
+            let extra = self.poll_some(num - wc.len() as u32)?;
+            wc.extend(extra);
         }
-        unsafe { wc.set_len(num as usize) };
         Ok(wc)
     }
 
@@ -260,10 +257,11 @@ impl Cq {
     ///
     /// Panic if the work completion status is not success.
     pub fn poll_one_blocking_consumed(&self) {
-        // SAFETY: `ibv_wc` is POD type.
-        let mut wc: ibv_wc = unsafe { mem::zeroed() };
-        while unsafe { ibv_poll_cq(self.as_raw(), 1, &mut wc) } == 0 {}
-        assert_eq!(Wc(wc).status(), WcStatus::Success);
+        // SAFETY: `Wc` is transparent over `ibv_wc`.
+        let mut wc = <MaybeUninit<Wc>>::uninit();
+        while unsafe { ibv_poll_cq(self.as_raw(), 1, &mut wc as *mut _ as _) } == 0 {}
+        // SAFETY: `wc` is initialized by `ibv_poll_cq`.
+        assert_eq!(unsafe { wc.assume_init() }.status(), WcStatus::Success);
     }
 
     /// Blockingly poll until the given work completion buffer is filled.
