@@ -19,9 +19,17 @@ pub union ibv_async_event_element_union_t {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub union imm_data_invalidated_rkey_union_t {
     pub imm_data: __be32,
     pub invalidated_rkey: u32,
+}
+
+impl std::fmt::Debug for imm_data_invalidated_rkey_union_t {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // SAFETY: union of two `u32`s.
+        unsafe { f.debug_struct("imm_data_invalidated_rkey_union_t").field("imm_data", &self.imm_data).finish() }
+    }
 }
 
 #[repr(C)]
