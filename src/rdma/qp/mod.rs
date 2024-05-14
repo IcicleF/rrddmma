@@ -1,10 +1,5 @@
 //! Queue pair and related types.
 
-mod builder;
-mod peer;
-mod state;
-mod ty;
-
 use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -12,13 +7,24 @@ use std::{fmt, mem, ptr};
 
 use thiserror::Error;
 
+use crate::bindings::ibv_exp_wr_opcode::{
+    IBV_EXP_WR_EXT_MASKED_ATOMIC_CMP_AND_SWP, IBV_EXP_WR_EXT_MASKED_ATOMIC_FETCH_AND_ADD,
+};
+use crate::bindings::*;
+use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, type_alias::*};
+use crate::utils::interop::*;
+
 pub use self::builder::*;
+pub use self::params::*;
 pub use self::peer::*;
 pub use self::state::*;
 pub use self::ty::*;
-use crate::bindings::*;
-use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, type_alias::*};
-use crate::utils::{interop::*, select::*};
+
+mod builder;
+mod params;
+mod peer;
+mod state;
+mod ty;
 
 /// Wrapper for `*mut ibv_qp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -152,15 +158,26 @@ impl Qp {
         Ok(())
     }
 
-    /// Create a new queue pair with the given initialization attributes.
-    pub(crate) fn new(pd: &Pd, init_attr: QpBuilder<'_>) -> Result<Self, QpCreationError> {
-        let init_attr = init_attr.unwrap();
+    /// Create a new queue pair with the given builder.
+    pub(crate) fn new(pd: &Pd, builder: QpBuilder) -> Result<Self, QpCreationError> {
+        let init_attr = builder.unwrap();
         Self::check_caps(pd.context(), &init_attr.caps)?;
 
-        let qp = unsafe {
-            let mut init_attr = (&init_attr).into();
-            ibv_create_qp(pd.as_raw(), &mut init_attr)
-        };
+        #[cfg(mlnx4)]
+        fn do_create_qp(pd: &Pd, init_attr: &QpInitAttr) -> *mut ibv_qp {
+            let mut init_attr = init_attr.to_exp_init_attr(pd.as_raw());
+            // SAFETY: FFI.
+            unsafe { ibv_exp_create_qp(pd.context().as_raw(), &mut init_attr) }
+        }
+
+        #[cfg(mlnx5)]
+        fn do_create_qp(init_attr: &QpBuilder) -> *mut ibv_qp {
+            let mut init_attr = init_attr.to_init_attr();
+            // SAFETY: FFI.
+            unsafe { ibv_create_qp(pd.as_raw(), &mut init_attr) }
+        }
+
+        let qp = do_create_qp(pd, &init_attr);
         let qp = NonNull::new(qp).ok_or_else(io::Error::last_os_error)?;
         let qp = IbvQp(qp);
 
@@ -428,7 +445,7 @@ impl Qp {
     }
 
     /// Bind the queue pair to a remote peer.
-    /// Will modify the QP to RTS state if it is an connected QP at RESET state
+    /// Will modify the QP to RTS state if it is a connected QP at RESET state
     /// and already bound to a local port.
     ///
     /// If the QP is UD, this method will not modify the QP. Instead, it sets
@@ -509,11 +526,11 @@ impl Qp {
         from_c_ret_explained(ret, Self::recv_err_explanation)
     }
 
-    /// Post an RDMA send request.
+    /// Post an RDMA Send request.
     ///
-    /// If `peer` is `None`, this QP is expected to be connected and the send
+    /// If `peer` is `None`, this QP is expected to be connected and the Send
     /// will go to the remote end of the connection. Otherwise, this QP is
-    /// expected to be UD and the send will go to the specified peer.
+    /// expected to be UD and the Send will go to the specified peer.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the send
@@ -528,6 +545,13 @@ impl Qp {
         inline: bool,
     ) -> io::Result<()> {
         let mut sgl = build_sgl(local);
+        let mut send_flags = 0;
+        if signal {
+            send_flags |= ibv_send_flags::IBV_SEND_SIGNALED.0;
+        }
+        if inline {
+            send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
+        }
         let mut wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
@@ -537,13 +561,11 @@ impl Qp {
                 sgl.as_mut_ptr()
             },
             num_sge: local.len() as i32,
-            opcode: imm.is_none().select_val(
-                ibv_wr_opcode::IBV_WR_SEND,
-                ibv_wr_opcode::IBV_WR_SEND_WITH_IMM,
-            ),
-            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0)
-                | inline.select_val(ibv_send_flags::IBV_SEND_INLINE.0, 0),
-            ..(unsafe { mem::zeroed() })
+            opcode: imm
+                .map(|_| ibv_wr_opcode::IBV_WR_SEND_WITH_IMM)
+                .unwrap_or(ibv_wr_opcode::IBV_WR_SEND),
+            send_flags,
+            ..unsafe { mem::zeroed() }
         };
         wr.set_imm(imm.unwrap_or(0));
 
@@ -573,8 +595,7 @@ impl Qp {
         signal: bool,
     ) -> io::Result<()> {
         let mut sgl = build_sgl(local);
-        let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
-        wr = ibv_send_wr {
+        let mut wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
             sg_list: if local.is_empty() {
@@ -584,11 +605,15 @@ impl Qp {
             },
             num_sge: local.len() as i32,
             opcode: ibv_wr_opcode::IBV_WR_RDMA_READ,
-            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            send_flags: if signal {
+                ibv_send_flags::IBV_SEND_SIGNALED.0
+            } else {
+                0
+            },
             wr: wr_t {
                 rdma: remote.as_rdma_t(),
             },
-            ..wr
+            ..unsafe { mem::zeroed() }
         };
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
@@ -621,15 +646,18 @@ impl Qp {
                 sgl.as_mut_ptr()
             },
             num_sge: local.len() as i32,
-            opcode: imm.is_none().select_val(
-                ibv_wr_opcode::IBV_WR_RDMA_WRITE,
-                ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM,
-            ),
-            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            opcode: imm
+                .map(|_| ibv_wr_opcode::IBV_WR_SEND_WITH_IMM)
+                .unwrap_or(ibv_wr_opcode::IBV_WR_SEND),
+            send_flags: if signal {
+                ibv_send_flags::IBV_SEND_SIGNALED.0
+            } else {
+                0
+            },
             wr: wr_t {
                 rdma: remote.as_rdma_t(),
             },
-            ..(unsafe { mem::zeroed() })
+            ..unsafe { mem::zeroed() }
         };
         wr.set_imm(imm.unwrap_or(0));
 
@@ -656,28 +684,7 @@ impl Qp {
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
-        if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
-            return Err(IoError::new(
-                IoErrorKind::InvalidInput,
-                format!(
-                    "expected 8B buffers for compare-and-swap, got ({}, {})",
-                    local.len(),
-                    remote.len
-                ),
-            ));
-        }
-        if (local.addr() as u64) % (mem::align_of::<u64>() as u64) != 0
-            || remote.addr % (mem::align_of::<u64>() as u64) != 0
-        {
-            return Err(IoError::new(
-                IoErrorKind::InvalidInput,
-                format!(
-                    "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
-                    local.addr(),
-                    remote.addr as *const u8
-                ),
-            ));
-        }
+        check_atomic_mem(local, remote)?;
 
         let mut sgl = [ibv_sge::from(local.clone())];
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
@@ -687,7 +694,11 @@ impl Qp {
             sg_list: sgl.as_mut_ptr(),
             num_sge: 1,
             opcode: ibv_wr_opcode::IBV_WR_ATOMIC_CMP_AND_SWP,
-            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            send_flags: if signal {
+                ibv_send_flags::IBV_SEND_SIGNALED.0
+            } else {
+                0
+            },
             wr: wr_t {
                 atomic: atomic_t {
                     compare_add: current,
@@ -705,7 +716,7 @@ impl Qp {
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
-    /// Post an RDMA fetch-and-add (FAA) request.
+    /// Post an RDMA atomic fetch-and-add (FAA) request.
     /// Only valid for RC QPs.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
@@ -720,28 +731,7 @@ impl Qp {
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
-        if local.len() != mem::size_of::<u64>() || remote.len != mem::size_of::<u64>() {
-            return Err(IoError::new(
-                IoErrorKind::InvalidInput,
-                format!(
-                    "expected 8B buffers for compare-and-swap, got ({}, {})",
-                    local.len(),
-                    remote.len
-                ),
-            ));
-        }
-        if (local.addr() as u64) % (mem::align_of::<u64>() as u64) != 0
-            || remote.addr % (mem::align_of::<u64>() as u64) != 0
-        {
-            return Err(IoError::new(
-                IoErrorKind::InvalidInput,
-                format!(
-                    "expected 8B-aligned buffers for compare-and-swap, got ({:p}, {:p})",
-                    local.addr(),
-                    remote.addr as *const u8
-                ),
-            ));
-        }
+        check_atomic_mem(local, remote)?;
 
         let mut sgl = [ibv_sge::from(local.clone())];
         let mut wr = unsafe { mem::zeroed::<ibv_send_wr>() };
@@ -751,7 +741,11 @@ impl Qp {
             sg_list: sgl.as_mut_ptr(),
             num_sge: 1,
             opcode: ibv_wr_opcode::IBV_WR_ATOMIC_FETCH_AND_ADD,
-            send_flags: signal.select_val(ibv_send_flags::IBV_SEND_SIGNALED.0, 0),
+            send_flags: if signal {
+                ibv_send_flags::IBV_SEND_SIGNALED.0
+            } else {
+                0
+            },
             wr: wr_t {
                 atomic: atomic_t {
                     compare_add: add,
@@ -765,6 +759,127 @@ impl Qp {
         let ret = unsafe {
             let mut bad_wr = ptr::null_mut();
             ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+
+    /// Post an RDMA extended atomic compare-and-swap (CAS) request.
+    /// Only available with MLNX_OFED v4.x driver, and for RC QPs that enabled
+    /// extended atomics when building.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_exp_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the CAS
+    /// by some means, for example by polling the send CQ.
+    ///
+    /// # Safety
+    ///
+    /// All pointers specified in `params` must be valid and properly aligned.
+    #[cfg(mlnx4)]
+    pub unsafe fn ext_compare_swap<const N: usize>(
+        &self,
+        local: &MrSlice,
+        remote: &MrRemote,
+        params: ExtCompareSwapParams,
+        wr_id: WrId,
+        signal: bool,
+    ) -> io::Result<()> {
+        check_ext_atomic_mem::<N>(local, remote)?;
+
+        let mut sgl = [ibv_sge::from(local.clone())];
+        let mut wr = ibv_exp_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: 1,
+            exp_opcode: IBV_EXP_WR_EXT_MASKED_ATOMIC_CMP_AND_SWP,
+            exp_send_flags: IBV_EXP_SEND_EXT_ATOMIC_INLINE
+                | if signal { IBV_EXP_SEND_SIGNALED } else { 0 },
+            ..unsafe { mem::zeroed() }
+        };
+
+        // SAFETY: access to POD union type.
+        unsafe {
+            wr.ext_op.masked_atomics.log_arg_sz = N.ilog2();
+            wr.ext_op.masked_atomics.remote_addr = remote.addr;
+            wr.ext_op.masked_atomics.rkey = remote.rkey;
+
+            let cmp_swap = &mut wr.ext_op.masked_atomics.wr_data.inline_data.op.cmp_swap;
+            if N == 8 {
+                cmp_swap.compare_val = ptr::read(params.compare.as_ptr() as *mut u64);
+                cmp_swap.compare_mask = ptr::read(params.compare_mask.as_ptr() as *mut u64);
+                cmp_swap.swap_val = ptr::read(params.swap.as_ptr() as *mut u64);
+                cmp_swap.swap_mask = ptr::read(params.swap_mask.as_ptr() as *mut u64);
+            } else {
+                cmp_swap.compare_val = params.compare.as_ptr() as usize as u64;
+                cmp_swap.compare_mask = params.compare_mask.as_ptr() as usize as u64;
+                cmp_swap.swap_val = params.swap.as_ptr() as usize as u64;
+                cmp_swap.swap_mask = params.swap_mask.as_ptr() as usize as u64;
+            }
+        }
+
+        // SAFETY: FFI.
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_exp_post_send(self.as_raw(), &mut wr, &mut bad_wr)
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+
+    /// Post an RDMA extended atomic fetch-and-add (FAA) request.
+    /// Only available with MLNX_OFED v4.x driver, and for RC QPs that enabled
+    /// extended atomics when building.
+    ///
+    /// **NOTE:** this function is only equivalent to calling `ibv_exp_post_send`.
+    /// It is the caller's responsibility to ensure the completion of the FAA
+    /// by some means, for example by polling the send CQ.
+    ///
+    /// # Safety
+    ///
+    /// `add` and `mask` must be valid and properly aligned pointers.
+    #[cfg(mlnx4)]
+    pub fn ext_fetch_add<const N: usize>(
+        &self,
+        local: &MrSlice,
+        remote: &MrRemote,
+        add: NonNull<u64>,
+        mask: NonNull<u64>,
+        wr_id: WrId,
+        signal: bool,
+    ) -> io::Result<()> {
+        check_ext_atomic_mem::<N>(local, remote)?;
+
+        let mut sgl = [ibv_sge::from(local.clone())];
+        let mut wr = ibv_exp_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: sgl.as_mut_ptr(),
+            num_sge: 1,
+            exp_opcode: IBV_EXP_WR_EXT_MASKED_ATOMIC_FETCH_AND_ADD,
+            exp_send_flags: IBV_EXP_SEND_EXT_ATOMIC_INLINE
+                | if signal { IBV_EXP_SEND_SIGNALED } else { 0 },
+            ..unsafe { mem::zeroed() }
+        };
+
+        // SAFETY: access to POD union type.
+        unsafe {
+            wr.ext_op.masked_atomics.log_arg_sz = N.ilog2();
+            wr.ext_op.masked_atomics.remote_addr = remote.addr;
+            wr.ext_op.masked_atomics.rkey = remote.rkey;
+
+            let fetch_add = &mut wr.ext_op.masked_atomics.wr_data.inline_data.op.fetch_add;
+            if N == 8 {
+                fetch_add.add_val = ptr::read(add.as_ptr());
+                fetch_add.field_boundary = ptr::read(mask.as_ptr());
+            } else {
+                fetch_add.add_val = add.as_ptr() as usize as u64;
+                fetch_add.field_boundary = mask.as_ptr() as usize as u64;
+            }
+        }
+
+        // SAFETY: FFI.
+        let ret = unsafe {
+            let mut bad_wr = ptr::null_mut();
+            ibv_exp_post_send(self.as_raw(), &mut wr, &mut bad_wr)
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
@@ -810,4 +925,48 @@ pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
         .iter()
         .map(|slice| ibv_sge::from(slice.clone()))
         .collect()
+}
+
+#[inline]
+fn check_atomic_mem(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
+    if cfg!(debug_assertions) {
+        if local.len() != 8 || remote.len != 8 {
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                "atomic buffer sizes are not 8B",
+            ));
+        }
+        if (local.addr() as u64) % 8 != 0 || remote.addr % 8 != 0 {
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                "atomic buffers are not 8B-aligned",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn check_ext_atomic_mem<const N: usize>(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
+    if !matches!(N, 8 | 16 | 32) {
+        return Err(IoError::new(
+            IoErrorKind::InvalidInput,
+            format!("invalid ext-atomic length: {}", N),
+        ));
+    }
+    if cfg!(debug_assertions) {
+        if local.len() != N || remote.len != N {
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                "ext-atomic buffer sizes do not match the specified length",
+            ));
+        }
+        if (local.addr() as usize) % N != 0 || (remote.addr as usize) % N != 0 {
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                "ext-atomic buffers are not aligned to their lengths",
+            ));
+        }
+    }
+    Ok(())
 }

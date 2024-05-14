@@ -1,6 +1,7 @@
-pub use super::common::*;
-use super::*;
 use libc::*;
+
+use super::*;
+pub use super::common::*;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -28,7 +29,11 @@ pub union imm_data_invalidated_rkey_union_t {
 impl std::fmt::Debug for imm_data_invalidated_rkey_union_t {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // SAFETY: union of two `u32`s.
-        unsafe { f.debug_struct("imm_data_invalidated_rkey_union_t").field("imm_data", &self.imm_data).finish() }
+        unsafe {
+            f.debug_struct("imm_data_invalidated_rkey_union_t")
+                .field("imm_data", &self.imm_data)
+                .finish()
+        }
     }
 }
 
