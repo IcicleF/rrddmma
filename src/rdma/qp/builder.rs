@@ -1,9 +1,23 @@
+#[cfg(mlnx4)]
+use std::collections::HashMap;
 use std::mem;
 
-use super::{Qp, QpCreationError, QpType};
 use crate::bindings::*;
 use crate::rdma::cq::*;
 use crate::rdma::pd::*;
+
+use super::{Qp, QpCreationError, QpType};
+
+/// Experimental features available in MLNX_OFED v4.x drivers.
+#[cfg(mlnx4)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum ExpFeature {
+    /// Enable extended atomic compare-and-swap & fetch-and-add.
+    ///
+    /// The value is the maximum atomic argument size in bytes (e.g., 8).
+    /// Maximum is usually 32 bytes. Minimum is 8 bytes.
+    ExtendedAtomics,
+}
 
 /// Queue pair capability attributes.
 ///
@@ -16,7 +30,7 @@ pub struct QpCaps {
     /// Value can be [0..`dev_cap.max_qp_wr`].
     ///
     /// **NOTE:** There may be RDMA devices that for specific transport types
-    /// may support less outstanding Work Requests than the maximum reported
+    /// may support fewer outstanding Work Requests than the maximum reported
     /// value.
     pub max_send_wr: u32,
 
@@ -26,7 +40,7 @@ pub struct QpCaps {
     /// Value can be [0..`dev_cap.max_qp_wr`].
     ///
     /// **NOTE:** There may be RDMA devices that for specific transport types
-    /// may support less outstanding Work Requests than the maximum reported
+    /// may support fewer outstanding Work Requests than the maximum reported
     /// value. This value is ignored if the Queue Pair is associated with an SRQ.
     pub max_recv_wr: u32,
 
@@ -36,7 +50,7 @@ pub struct QpCaps {
     /// Value can be [0..`dev_cap.max_sge`].
     ///
     /// **NOTE:** There may be RDMA devices that for specific transport types
-    /// may support less scatter/gather elements than the maximum reported value.
+    /// may support fewer scatter/gather elements than the maximum reported value.
     pub max_send_sge: u32,
 
     /// The maximum number of scatter/gather elements in any Work Request that
@@ -45,7 +59,7 @@ pub struct QpCaps {
     /// Value can be [0..`dev_cap.max_sge`].
     ///
     /// **NOTE:** There may be RDMA devices that for specific transport types
-    /// may support less scatter/gather elements than the maximum reported value.
+    /// may support fewer scatter/gather elements than the maximum reported value.
     /// This value is ignored if the Queue Pair is associated with an SRQ.
     pub max_recv_sge: u32,
 
@@ -91,20 +105,10 @@ pub struct QpBuilder<'a> {
 
     /// Whether to signal for all send work requests.
     pub(super) sq_sig_all: Option<bool>,
-}
 
-impl<'a> QpBuilder<'a> {
-    /// Unwrap the builder and return the underlying attributes.
-    #[inline]
-    pub(super) fn unwrap(self) -> QpInitAttr {
-        QpInitAttr {
-            send_cq: self.send_cq.expect("send CQ must be set").clone(),
-            recv_cq: self.recv_cq.expect("recv CQ must be set").clone(),
-            caps: self.caps,
-            qp_type: self.qp_type.expect("QP type must be set"),
-            sq_sig_all: self.sq_sig_all.expect("sq_sig_all must be explicitly set"),
-        }
-    }
+    /// Enabled experimental features.
+    #[cfg(mlnx4)]
+    pub(super) features: HashMap<ExpFeature, u32>,
 }
 
 impl<'a> QpBuilder<'a> {
@@ -119,6 +123,9 @@ impl<'a> QpBuilder<'a> {
             caps: unsafe { mem::zeroed() },
             qp_type: None,
             sq_sig_all: None,
+
+            #[cfg(mlnx4)]
+            features: HashMap::new(),
         }
     }
 
@@ -158,6 +165,22 @@ impl<'a> QpBuilder<'a> {
         self
     }
 
+    /// Enable experimental features for the QP.
+    #[cfg(mlnx4)]
+    #[inline]
+    pub fn enable_feature(mut self, feature: ExpFeature, value: u32) -> Self {
+        self.features.insert(feature, value);
+        self
+    }
+
+    /// Disable experimental features for the QP.
+    #[cfg(mlnx4)]
+    #[inline]
+    pub fn disable_feature(mut self, feature: ExpFeature) -> Self {
+        self.features.remove(&feature);
+        self
+    }
+
     /// Build the queue pair.
     ///
     /// # Panics
@@ -166,6 +189,23 @@ impl<'a> QpBuilder<'a> {
     #[inline]
     pub fn build(self, pd: &Pd) -> Result<Qp, QpCreationError> {
         Qp::new(pd, self)
+    }
+}
+
+impl<'a> QpBuilder<'a> {
+    /// Unwrap the builder and return the underlying attributes.
+    #[inline]
+    pub(super) fn unwrap(self) -> QpInitAttr {
+        QpInitAttr {
+            send_cq: self.send_cq.expect("send CQ must be set").clone(),
+            recv_cq: self.recv_cq.expect("recv CQ must be set").clone(),
+            caps: self.caps,
+            qp_type: self.qp_type.expect("QP type must be set"),
+            sq_sig_all: self.sq_sig_all.expect("sq_sig_all must be explicitly set"),
+
+            #[cfg(mlnx4)]
+            features: self.features,
+        }
     }
 }
 
@@ -191,24 +231,62 @@ pub(super) struct QpInitAttr {
 
     /// Whether to signal for all send work requests.
     pub sq_sig_all: bool,
+
+    /// Experimental feature flags.
+    #[cfg(mlnx4)]
+    pub features: HashMap<ExpFeature, u32>,
 }
 
-impl From<&'_ QpInitAttr> for ibv_qp_init_attr {
-    /// Translate the initialization attributes into [`ibv_qp_init_attr`].
-    fn from(value: &QpInitAttr) -> Self {
+impl QpInitAttr {
+    /// Create an [`ibv_qp_init_attr`] from the attributes.
+    #[allow(unused)]
+    pub fn to_init_attr(&self) -> ibv_qp_init_attr {
         ibv_qp_init_attr {
-            send_cq: value.send_cq.as_raw(),
-            recv_cq: value.recv_cq.as_raw(),
+            send_cq: self.send_cq.as_raw(),
+            recv_cq: self.recv_cq.as_raw(),
             cap: ibv_qp_cap {
-                max_send_wr: value.caps.max_send_wr,
-                max_recv_wr: value.caps.max_recv_wr,
-                max_send_sge: value.caps.max_send_sge,
-                max_recv_sge: value.caps.max_recv_sge,
-                max_inline_data: value.caps.max_inline_data,
+                max_send_wr: self.caps.max_send_wr,
+                max_recv_wr: self.caps.max_recv_wr,
+                max_send_sge: self.caps.max_send_sge,
+                max_recv_sge: self.caps.max_recv_sge,
+                max_inline_data: self.caps.max_inline_data,
             },
-            qp_type: u32::from(value.qp_type),
-            sq_sig_all: value.sq_sig_all as i32,
-            ..(unsafe { mem::zeroed() })
+            qp_type: u32::from(self.qp_type),
+            sq_sig_all: self.sq_sig_all as i32,
+            ..unsafe { mem::zeroed() }
         }
+    }
+
+    /// Create an [`ibv_exp_qp_init_attr`] from the attributes.
+    ///
+    #[cfg(mlnx4)]
+    pub fn to_exp_init_attr(&self, pd: *mut ibv_pd) -> ibv_exp_qp_init_attr {
+        let mut attr = ibv_exp_qp_init_attr {
+            send_cq: self.send_cq.as_raw(),
+            recv_cq: self.recv_cq.as_raw(),
+            cap: ibv_qp_cap {
+                max_send_wr: self.caps.max_send_wr,
+                max_recv_wr: self.caps.max_recv_wr,
+                max_send_sge: self.caps.max_send_sge,
+                max_recv_sge: self.caps.max_recv_sge,
+                max_inline_data: self.caps.max_inline_data,
+            },
+            qp_type: u32::from(self.qp_type),
+            sq_sig_all: self.sq_sig_all as i32,
+            pd,
+            comp_mask: IBV_EXP_QP_INIT_ATTR_PD,
+            ..unsafe { mem::zeroed() }
+        };
+
+        // Digest experimental features.
+        for (&feature, &value) in &self.features {
+            match feature {
+                ExpFeature::ExtendedAtomics => {
+                    attr.comp_mask |= IBV_EXP_QP_INIT_ATTR_ATOMICS_ARG;
+                    attr.max_atomic_arg = value.max(mem::size_of::<u64>() as _);
+                }
+            }
+        }
+        attr
     }
 }

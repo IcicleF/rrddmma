@@ -1,6 +1,7 @@
-pub use super::common::*;
-use super::*;
 use libc::*;
+
+use super::*;
+pub use super::common::*;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -322,7 +323,7 @@ macro_rules! IBV_EXP_RET_ON_INVALID_COMP_MASK_compat {
 #[allow(unused)]
 macro_rules! IBV_EXP_RET_NULL_ON_INVALID_COMP_MASK_compat {
     ($val:expr, $valid_mask:expr, $func:expr) => {
-        IBV_EXP_RET_ON_INVALID_COMP_MASK_compat!($val, $valid_mask, ::std::ptr::null_mut(), $func,)
+        IBV_EXP_RET_ON_INVALID_COMP_MASK_compat!($val, $valid_mask, ::std::ptr::null_mut(), $func)
     };
 }
 
@@ -373,5 +374,46 @@ pub unsafe fn ibv_exp_query_gid_attr(
             "ibv_exp_query_gid_attr"
         );
         (*vctx).exp_query_gid_attr.unwrap()(context, port_num, index, attr)
+    }
+}
+
+/// Create an experimental queue pair.
+#[inline]
+pub unsafe fn ibv_exp_create_qp(
+    context: *mut ibv_context,
+    qp_init_attr: *mut ibv_exp_qp_init_attr,
+) -> *mut ibv_qp {
+    let mask = (*qp_init_attr).comp_mask;
+
+    if mask == IBV_EXP_QP_INIT_ATTR_PD {
+        return ibv_create_qp((*qp_init_attr).pd, qp_init_attr as *mut ibv_qp_init_attr);
+    }
+
+    let vctx = verbs_get_exp_ctx_op!(context, lib_exp_create_qp);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS;
+        std::ptr::null_mut()
+    } else {
+        IBV_EXP_RET_NULL_ON_INVALID_COMP_MASK_compat!(
+            (*qp_init_attr).comp_mask,
+            IBV_EXP_QP_INIT_ATTR_RESERVED1 - 1,
+            "ibv_exp_create_qp"
+        );
+        (*vctx).lib_exp_create_qp.unwrap()(context, qp_init_attr)
+    }
+}
+
+/// Post a list of experimental work requests to a send queue.
+#[inline]
+pub unsafe fn ibv_exp_post_send(
+    qp: *mut ibv_qp,
+    wr: *mut ibv_exp_send_wr,
+    bad_wr: *mut *mut ibv_exp_send_wr,
+) -> ::std::os::raw::c_int {
+    let vctx = verbs_get_exp_ctx_op!((*qp).context, drv_exp_post_send);
+    if vctx.is_null() {
+        -ENOSYS
+    } else {
+        (*vctx).drv_exp_post_send.unwrap()(qp, wr, bad_wr)
     }
 }
