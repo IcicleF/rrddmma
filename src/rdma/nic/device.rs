@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::io::{self, Read};
-use std::iter::IntoIterator;
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::path::Path;

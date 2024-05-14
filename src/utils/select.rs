@@ -1,4 +1,5 @@
 //! Provide a `select` method for [`bool`], integer primitives, [`Option`], and [`Result`].
+#![allow(dead_code)]
 
 /// Implements a `select` method for primitive types that consumes two inputs
 /// and returns one of them based on the value of the selector.

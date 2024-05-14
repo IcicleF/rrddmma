@@ -25,6 +25,7 @@ libc = "0.2"
 [dev-dependencies]
 futures = "0.3"
 anyhow = "1.0"
+quanta = "0.12"
 
 [build-dependencies]
 pkg-config = "0.3"

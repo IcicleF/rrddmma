@@ -17,7 +17,7 @@ pub use self::peer::*;
 pub use self::state::*;
 pub use self::ty::*;
 use crate::bindings::*;
-use crate::rdma::{context::Context, cq::Cq, mr::*, nic::Port, pd::Pd, type_alias::*};
+use crate::rdma::{context::Context, cq::Cq, mr::*, nic::*, pd::Pd, type_alias::*};
 use crate::utils::{interop::*, select::*};
 
 /// Wrapper for `*mut ibv_qp`.
@@ -394,7 +394,7 @@ impl Qp {
         &self.inner.init_attr.recv_cq
     }
 
-    /// Bind the queue pair to a local port.
+    /// Bind the queue pair to an active local port.
     /// Will modify the QP to RTS state if it is an unreliable datagram QP at
     /// RESET state.
     ///
@@ -407,13 +407,19 @@ impl Qp {
     ///
     /// # Panics
     ///
-    /// - Panic if the specified GID index does not exist, or if there aren't any GIDs of the port.
-    /// - Panic if the QP is already bound to a local port.
+    /// Panic if the QP is already bound to a local port.
+    /// If you really wish to rebind the QP to another port, call [`Self::reset()`] first.
     pub fn bind_local_port(&mut self, port: &Port, gid_index: Option<u8>) -> io::Result<()> {
         assert!(
             self.local_port.is_none(),
             "QP already bound to a local port"
         );
+        if port.state() != PortState::Active {
+            return Err(IoError::new(
+                IoErrorKind::NotConnected,
+                "port is not active",
+            ));
+        }
 
         let gid_index = gid_index.unwrap_or(port.recommended_gid().1);
         self.local_port = Some((port.clone(), gid_index));
@@ -547,7 +553,7 @@ impl Qp {
         };
         wr.set_imm(imm.unwrap_or(0));
 
-        if let Some(peer) = peer {
+        if let Some(peer) = peer.or(self.peer.as_ref()) {
             wr.wr.ud = peer.ud();
         }
         let ret = unsafe {
