@@ -112,32 +112,6 @@ pub unsafe fn ibv_destroy_flow(flow_id: *mut ibv_flow) -> ::std::os::raw::c_int 
     }
 }
 
-/// Open an extended connection domain.
-#[inline]
-pub unsafe fn ibv_open_xrcd(
-    context: *mut ibv_context,
-    xrcd_init_attr: *mut ibv_xrcd_init_attr,
-) -> *mut ibv_xrcd {
-    let vctx = verbs_get_ctx_op!(context, open_xrcd);
-    if vctx.is_null() {
-        *__errno_location() = ENOSYS;
-        std::ptr::null_mut()
-    } else {
-        (*vctx).open_xrcd.unwrap()(context, xrcd_init_attr)
-    }
-}
-
-/// Allocate a memory window.
-#[inline]
-pub unsafe fn ibv_alloc_mw(pd: *mut ibv_pd, type_: ibv_mw_type::Type) -> *mut ibv_mw {
-    if let Some(alloc_mw) = (*(*pd).context).ops.alloc_mw {
-        alloc_mw(pd, type_)
-    } else {
-        *__errno_location() = ENOSYS;
-        std::ptr::null_mut()
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union imm_data_invalidated_rkey_union_t {
@@ -288,6 +262,15 @@ pub struct ibv_exp_send_wr {
     pub ext_op: ext_op_t,
 }
 
+impl ibv_exp_send_wr {
+    /// Set the immediate data.
+    #[inline(always)]
+    pub fn set_imm(&mut self, imm: u32) {
+        // SAFETY: union of two `u32`s.
+        unsafe { self.ex.imm_data = imm };
+    }
+}
+
 #[inline]
 unsafe fn verbs_get_exp_ctx(ctx: *const ibv_context) -> *mut verbs_context_exp {
     let app_ex_ctx = verbs_get_ctx(ctx);
@@ -385,7 +368,7 @@ pub unsafe fn ibv_exp_create_qp(
 ) -> *mut ibv_qp {
     let mask = (*qp_init_attr).comp_mask;
 
-    if mask == IBV_EXP_QP_INIT_ATTR_PD {
+    if mask == ibv_exp_qp_init_attr_comp_mask::IBV_EXP_QP_INIT_ATTR_PD.0 {
         return ibv_create_qp((*qp_init_attr).pd, qp_init_attr as *mut ibv_qp_init_attr);
     }
 
@@ -396,10 +379,31 @@ pub unsafe fn ibv_exp_create_qp(
     } else {
         IBV_EXP_RET_NULL_ON_INVALID_COMP_MASK_compat!(
             (*qp_init_attr).comp_mask,
-            IBV_EXP_QP_INIT_ATTR_RESERVED1 - 1,
+            ibv_exp_qp_init_attr_comp_mask::IBV_EXP_QP_INIT_ATTR_RESERVED1.0 - 1,
             "ibv_exp_create_qp"
         );
         (*vctx).lib_exp_create_qp.unwrap()(context, qp_init_attr)
+    }
+}
+
+/// Modify a queue pair.
+#[inline]
+pub unsafe fn ibv_exp_modify_qp(
+    qp: *mut ibv_qp,
+    attr: *mut ibv_exp_qp_attr,
+    exp_attr_mask: u64,
+) -> ::std::os::raw::c_int {
+    let vctx = verbs_get_exp_ctx_op!((*qp).context, lib_exp_modify_qp);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS;
+        ENOSYS
+    } else {
+        IBV_EXP_RET_EINVAL_ON_INVALID_COMP_MASK_compat!(
+            (*attr).comp_mask,
+            ibv_exp_qp_attr_comp_mask::IBV_EXP_QP_ATTR_RESERVED.0 - 1,
+            "ibv_exp_modify_qp"
+        );
+        (*vctx).lib_exp_modify_qp.unwrap()(qp, attr, exp_attr_mask)
     }
 }
 
@@ -417,3 +421,73 @@ pub unsafe fn ibv_exp_post_send(
         (*vctx).drv_exp_post_send.unwrap()(qp, wr, bad_wr)
     }
 }
+
+/// Create a Dynamically-connected target.
+#[inline]
+pub unsafe fn ibv_exp_create_dct(
+    context: *mut ibv_context,
+    attr: *mut ibv_exp_dct_init_attr,
+) -> *mut ibv_exp_dct {
+    let vctx = verbs_get_exp_ctx_op!(context, create_dct);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS;
+        std::ptr::null_mut()
+    } else {
+        IBV_EXP_RET_NULL_ON_INVALID_COMP_MASK_compat!(
+            (*attr).comp_mask,
+            ibv_exp_dct_init_attr_comp_mask::IBV_EXP_DCT_INIT_ATTR_RESERVED.0 - 1,
+            "ibv_exp_create_dct"
+        );
+        pthread_mutex_lock(&mut (*context).mutex);
+        let dct = (*vctx).create_dct.unwrap()(context, attr);
+        if !dct.is_null() {
+            (*dct).context = context;
+        }
+        pthread_mutex_unlock(&mut (*context).mutex);
+        dct
+    }
+}
+
+/// Destroy a Dynamically-connected target.
+#[inline]
+pub unsafe fn ibv_exp_destroy_dct(dct: *mut ibv_exp_dct) -> ::std::os::raw::c_int {
+    let context = (*dct).context;
+    let vctx = verbs_get_exp_ctx_op!(context, destroy_dct);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS;
+        ENOSYS
+    } else {
+        pthread_mutex_lock(&mut (*context).mutex);
+        let err = (*vctx).destroy_dct.unwrap()(dct);
+        pthread_mutex_unlock(&mut (*context).mutex);
+        err
+    }
+}
+
+/// Query a experimental Dynamically-connected target.
+#[inline]
+pub unsafe fn ibv_exp_query_dct(
+    dct: *mut ibv_exp_dct,
+    attr: *mut ibv_exp_dct_attr,
+) -> ::std::os::raw::c_int {
+    let context = (*dct).context;
+    let vctx = verbs_get_exp_ctx_op!(context, query_dct);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS;
+        ENOSYS
+    } else {
+        IBV_EXP_RET_EINVAL_ON_INVALID_COMP_MASK_compat!(
+            (*attr).comp_mask,
+            ibv_exp_dct_attr_comp_mask::IBV_EXP_DCT_ATTR_RESERVED.0 - 1,
+            "ibv_exp_query_dct"
+        );
+        pthread_mutex_lock(&mut (*context).mutex);
+        let err = (*vctx).query_dct.unwrap()(dct, attr);
+        pthread_mutex_unlock(&mut (*context).mutex);
+        err
+    }
+}
+
+pub const IBV_EXP_DCT_STATE_ACTIVE: u8 = 0;
+pub const IBV_EXP_DCT_STATE_DRAINING: u8 = 1;
+pub const IBV_EXP_DCT_STATE_DRAINED: u8 = 2;

@@ -3,6 +3,7 @@
 use std::ptr::NonNull;
 
 /// Extended atomic compare-and-swap parameters.
+#[derive(Debug, Clone, Copy)]
 pub struct ExtCompareSwapParams {
     /// Pointer to the compare value.
     pub compare: NonNull<u64>,

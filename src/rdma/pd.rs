@@ -75,7 +75,7 @@ impl Pd {
         self.pd.as_ptr()
     }
 
-    /// Get the underlying `Context`.
+    /// Get the RDMA device context of the protection domain.
     #[inline]
     pub fn context(&self) -> &Context {
         &self.inner.ctx

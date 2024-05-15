@@ -1,15 +1,16 @@
-use std::io::Error as IoError;
 #[cfg(mlnx5)]
 use std::io::{self, ErrorKind as IoErrorKind};
+use std::io::Error as IoError;
 use std::mem;
 use std::net::Ipv6Addr;
 
 use serde::Serialize;
 use thiserror::Error;
 
-use super::raw::Gid;
 use crate::bindings::*;
 use crate::rdma::{context::*, type_alias::*};
+
+use super::raw::Gid;
 
 /// GID type.
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]

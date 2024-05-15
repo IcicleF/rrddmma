@@ -174,29 +174,3 @@ pub unsafe fn ___ibv_query_port(
         )
     }
 }
-
-/// Open an extended connection domain.
-#[inline]
-pub unsafe fn ibv_open_xrcd(
-    context: *mut ibv_context,
-    xrcd_init_attr: *mut ibv_xrcd_init_attr,
-) -> *mut ibv_xrcd {
-    let vctx = verbs_get_ctx_op!(context, open_xrcd);
-    if vctx.is_null() {
-        *__errno_location() = EOPNOTSUPP;
-        std::ptr::null_mut()
-    } else {
-        (*vctx).open_xrcd.unwrap()(context, xrcd_init_attr)
-    }
-}
-
-/// Allocate a memory window.
-#[inline]
-pub unsafe fn ibv_alloc_mw(pd: *mut ibv_pd, type_: ibv_mw_type::Type) -> *mut ibv_mw {
-    if let Some(alloc_mw) = (*(*pd).context).ops.alloc_mw {
-        alloc_mw(pd, type_)
-    } else {
-        *__errno_location() = EOPNOTSUPP;
-        std::ptr::null_mut()
-    }
-}

@@ -274,13 +274,20 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
                 .bitfield_enum("ibv_exp_device_cap_flags")
                 .bitfield_enum("ibv_exp_device_attr_comp_mask")
                 .bitfield_enum("ibv_exp_device_attr_comp_mask2")
+                .bitfield_enum("ibv_exp_qp_init_attr_comp_mask")
+                .bitfield_enum("ibv_exp_qp_attr_mask")
+                .bitfield_enum("ibv_exp_send_flags")
+                .bitfield_enum("ibv_exp_roce_gid_type")
+                // .bitfield_enum("ibv_exp_query_gid_attr")
+                .bitfield_enum("ibv_exp_qp_attr_comp_mask")
+                .bitfield_enum("ibv_exp_dct_init_attr_comp_mask")
+                .bitfield_enum("ibv_exp_dct_attr_comp_mask")
                 .constified_enum_module("ibv_exp_atomic_cap")
                 .constified_enum_module("ibv_exp_wr_opcode")
                 .constified_enum_module("ibv_exp_calc_op")
                 .constified_enum_module("ibv_exp_calc_data_type")
                 .constified_enum_module("ibv_exp_calc_data_size")
-                .constified_enum_module("ibv_exp_dm_memcpy_dir")
-                .bitfield_enum("ibv_exp_roce_gid_type");
+                .constified_enum_module("ibv_exp_dm_memcpy_dir");
         }
         VerbsVersion::V5 => {
             println!("cargo:rustc-cfg=mlnx5");

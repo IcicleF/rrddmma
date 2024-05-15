@@ -1,7 +1,8 @@
 #![macro_use]
 
-use super::*;
 use libc::*;
+
+use super::*;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -201,6 +202,89 @@ pub unsafe fn ibv_bind_mw(
     }
 }
 
+#[cfg(mlnx4)]
+const ENOSYS_OR_EOPNOTSUPP: ::std::os::raw::c_int = ENOSYS;
+
+#[cfg(mlnx5)]
+const ENOSYS_OR_EOPNOTSUPP: ::std::os::raw::c_int = EOPNOTSUPP;
+
+/// Open an extended connection domain.
+#[inline]
+pub unsafe fn ibv_open_xrcd(
+    context: *mut ibv_context,
+    xrcd_init_attr: *mut ibv_xrcd_init_attr,
+) -> *mut ibv_xrcd {
+    let vctx = verbs_get_ctx_op!(context, open_xrcd);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS_OR_EOPNOTSUPP;
+        std::ptr::null_mut()
+    } else {
+        (*vctx).open_xrcd.unwrap()(context, xrcd_init_attr)
+    }
+}
+
+/// Allocate a memory window.
+#[inline]
+pub unsafe fn ibv_alloc_mw(pd: *mut ibv_pd, type_: ibv_mw_type::Type) -> *mut ibv_mw {
+    if let Some(alloc_mw) = (*(*pd).context).ops.alloc_mw {
+        alloc_mw(pd, type_)
+    } else {
+        *__errno_location() = ENOSYS_OR_EOPNOTSUPP;
+        std::ptr::null_mut()
+    }
+}
+
+/// Get SRQ number.
+#[inline]
+pub unsafe fn ibv_get_srq_num(srq: *mut ibv_srq, srq_num: *mut u32) -> ::std::os::raw::c_int {
+    let vctx = verbs_get_ctx_op!((*srq).context, get_srq_num);
+    if vctx.is_null() {
+        ENOSYS_OR_EOPNOTSUPP
+    } else {
+        (*vctx).get_srq_num.unwrap()(srq, srq_num)
+    }
+}
+
+#[inline]
+pub unsafe fn ibv_create_qp_ex(
+    context: *mut ibv_context,
+    qp_init_attr_ex: *mut ibv_qp_init_attr_ex,
+) -> *mut ibv_qp {
+    let mask = (*qp_init_attr_ex).comp_mask;
+
+    if mask == ibv_qp_init_attr_mask::IBV_QP_INIT_ATTR_PD.0 {
+        ibv_create_qp(
+            (*qp_init_attr_ex).pd,
+            qp_init_attr_ex as *mut ibv_qp_init_attr,
+        )
+    } else {
+        let vctx = verbs_get_ctx_op!(context, create_qp_ex);
+        if vctx.is_null() {
+            *__errno_location() = ENOSYS_OR_EOPNOTSUPP;
+            std::ptr::null_mut()
+        } else {
+            (*vctx).create_qp_ex.unwrap()(context, qp_init_attr_ex)
+        }
+    }
+}
+
+/// Post a list of work requests to the specified SRQ.
+///
+/// # Arguments
+///
+/// - `srq`: the SRQ to post the work request on.
+/// - `recv_wr`: a A list of work requests to post on the receive queue.
+/// - `bad_recv_wr`: on an immediate failure, this parameter will reference
+///                  the work request that failed to be posted on the QP.
+#[inline]
+pub unsafe fn ibv_post_srq_recv(
+    srq: *mut ibv_srq,
+    recv_wr: *mut ibv_recv_wr,
+    bad_recv_wr: *mut *mut ibv_recv_wr,
+) -> ::std::os::raw::c_int {
+    (*(*srq).context).ops.post_srq_recv.unwrap()(srq, recv_wr, bad_recv_wr)
+}
+
 /// Poll a CQ for work completions.
 ///
 /// Poll a CQ for (possibly multiple) completions. If the return value
@@ -211,10 +295,10 @@ pub unsafe fn ibv_bind_mw(
 ///
 /// # Arguments
 ///
-/// - `cq`: the CQ being polled
-/// - `num_entries`: maximum number of completions to return
+/// - `cq`: the CQ being polled.
+/// - `num_entries`: maximum number of completions to return.
 /// - `wc`: array of at least @num_entries of &struct ibv_wc where completions
-///   will be returned
+///   will be returned.
 #[inline]
 pub unsafe fn ibv_poll_cq(
     cq: *mut ibv_cq,

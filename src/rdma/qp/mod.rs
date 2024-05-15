@@ -1,20 +1,17 @@
 //! Queue pair and related types.
 
+use std::{fmt, mem, ptr};
 use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::{fmt, mem, ptr};
 
 use thiserror::Error;
 
-#[cfg(mlnx4)]
-use crate::bindings::ibv_exp_wr_opcode::{
-    IBV_EXP_WR_EXT_MASKED_ATOMIC_CMP_AND_SWP, IBV_EXP_WR_EXT_MASKED_ATOMIC_FETCH_AND_ADD,
-};
 use crate::bindings::*;
 use crate::rdma::{
     context::Context,
     cq::Cq,
+    dct::Dct,
     mr::*,
     nic::{Port, PortState},
     pd::Pd,
@@ -173,20 +170,29 @@ impl Qp {
 
         #[cfg(mlnx4)]
         fn do_create_qp(pd: &Pd, init_attr: &QpInitAttr) -> *mut ibv_qp {
-            let mut init_attr = init_attr.to_exp_init_attr(pd.as_raw());
-            // SAFETY: FFI.
-            unsafe { ibv_exp_create_qp(pd.context().as_raw(), &mut init_attr) }
+            match init_attr.qp_type {
+                // QpType::DcIni => {
+                //     let mut init_attr = init_attr.to_init_attr_ex(pd);
+                //     // SAFETY: FFI.
+                //     unsafe { ibv_create_qp_ex(pd.context().as_raw(), &mut init_attr) }
+                // }
+                _ => {
+                    let mut init_attr = init_attr.to_exp_init_attr(pd);
+                    // SAFETY: FFI.
+                    unsafe { ibv_exp_create_qp(pd.context().as_raw(), &mut init_attr) }
+                }
+            }
         }
 
         #[cfg(mlnx5)]
         fn do_create_qp(pd: &Pd, init_attr: &QpInitAttr) -> *mut ibv_qp {
             let mut init_attr = init_attr.to_init_attr();
             // SAFETY: FFI.
-            unsafe { ibv_create_qp(pd.as_raw(), &mut init_attr) }
+            unsafe { ibv_create_qp(pd, &mut init_attr) }
         }
 
         let qp = do_create_qp(pd, &init_attr);
-        let qp = NonNull::new(qp).ok_or_else(io::Error::last_os_error)?;
+        let qp = NonNull::new(qp).ok_or_else(IoError::last_os_error)?;
         let qp = IbvQp(qp);
 
         let qp = Qp {
@@ -226,18 +232,15 @@ impl Qp {
         attr.port_num = self.local_port.as_ref().unwrap().0.num();
 
         if self.qp_type() == QpType::Rc {
-            attr.qp_access_flags = (ibv_access_flags::IBV_ACCESS_REMOTE_WRITE
-                | ibv_access_flags::IBV_ACCESS_REMOTE_READ
-                | ibv_access_flags::IBV_ACCESS_REMOTE_ATOMIC)
-                .0 as _;
+            attr.qp_access_flags = Permission::default().into();
             attr_mask |= ibv_qp_attr_mask::IBV_QP_ACCESS_FLAGS;
         } else {
-            attr_mask |= ibv_qp_attr_mask::IBV_QP_QKEY;
             attr.qkey = Self::GLOBAL_QKEY;
+            attr_mask |= ibv_qp_attr_mask::IBV_QP_QKEY;
         }
 
         // SAFETY: FFI.
-        let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
+        let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as _) };
         from_c_ret(ret)
     }
 
@@ -255,7 +258,7 @@ impl Qp {
             let ep = peer.endpoint();
 
             attr.path_mtu = port.mtu() as _;
-            attr.dest_qp_num = ep.qpn;
+            attr.dest_qp_num = ep.num;
             attr.rq_psn = Self::GLOBAL_INIT_PSN;
             attr.max_dest_rd_atomic = 16;
             attr.min_rnr_timer = 12;
@@ -297,8 +300,7 @@ impl Qp {
             attr.timeout = 14;
             attr.retry_cnt = 6;
             attr.rnr_retry = 6;
-            attr_mask = attr_mask
-                | ibv_qp_attr_mask::IBV_QP_MAX_QP_RD_ATOMIC
+            attr_mask |= ibv_qp_attr_mask::IBV_QP_MAX_QP_RD_ATOMIC
                 | ibv_qp_attr_mask::IBV_QP_TIMEOUT
                 | ibv_qp_attr_mask::IBV_QP_RETRY_CNT
                 | ibv_qp_attr_mask::IBV_QP_RNR_RETRY;
@@ -306,6 +308,76 @@ impl Qp {
 
         // SAFETY: FFI.
         let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
+        from_c_ret(ret)
+    }
+
+    /// Modify a DC initiator QP from RESET to RTS.
+    ///
+    /// # Panics
+    ///
+    /// Panic if the QP type is not `DcIni`.
+    #[cfg(mlnx4)]
+    fn modify_dcini_reset2rts(&self) -> io::Result<()> {
+        assert_eq!(self.qp_type(), QpType::DcIni);
+        let mut attr = unsafe { mem::zeroed::<ibv_exp_qp_attr>() };
+
+        // RESET -> INIT.
+        let ret = {
+            attr.qp_state = ibv_qp_state::IBV_QPS_INIT;
+            attr.pkey_index = 0;
+            attr.port_num = self.local_port.as_ref().unwrap().0.num();
+            attr.dct_key = Dct::GLOBAL_DC_KEY;
+
+            let attr_mask = ibv_exp_qp_attr_mask::IBV_EXP_QP_STATE
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_PKEY_INDEX
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_PORT
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_DC_KEY;
+            // SAFETY: FFI.
+            unsafe { ibv_exp_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as u64) }
+        };
+        from_c_ret(ret)?;
+
+        // INIT -> RTR.
+        let ret = {
+            let (port, gid_idx) = self.local_port.as_ref().unwrap();
+            let gid_idx = *gid_idx;
+
+            attr.qp_state = ibv_qp_state::IBV_QPS_RTR;
+            attr.path_mtu = port.mtu() as _;
+
+            attr.ah_attr.grh.sgid_index = gid_idx;
+            attr.ah_attr.grh.hop_limit = 0xFF;
+            attr.ah_attr.grh.dgid = port.gids()[gid_idx as usize].gid.into();
+            attr.ah_attr.is_global = 1;
+            attr.ah_attr.dlid = port.lid();
+            attr.ah_attr.port_num = port.num();
+            attr.ah_attr.sl = 0;
+            attr.dct_key = Dct::GLOBAL_DC_KEY;
+
+            let attr_mask = ibv_exp_qp_attr_mask::IBV_EXP_QP_STATE
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_PATH_MTU
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_AV;
+            // SAFETY: FFI.
+            unsafe { ibv_exp_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as u64) }
+        };
+        from_c_ret(ret)?;
+
+        // RTR -> RTS.
+        let ret = {
+            attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
+            attr.max_rd_atomic = 16;
+            attr.timeout = 14;
+            attr.retry_cnt = 6;
+            attr.rnr_retry = 6;
+
+            let attr_mask = ibv_exp_qp_attr_mask::IBV_EXP_QP_STATE
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_MAX_QP_RD_ATOMIC
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_TIMEOUT
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_RETRY_CNT
+                | ibv_exp_qp_attr_mask::IBV_EXP_QP_RNR_RETRY;
+            // SAFETY: FFI.
+            unsafe { ibv_exp_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as u64) }
+        };
         from_c_ret(ret)
     }
 
@@ -331,6 +403,114 @@ impl Qp {
             libc::EFAULT => Some("invalid QP"),
             _ => None,
         }
+    }
+}
+
+impl Qp {
+    #[cfg(mlnx4)]
+    fn send_impl(
+        &self,
+        local: &[MrSlice],
+        peer: Option<&QpPeer>,
+        imm: Option<ImmData>,
+        wr_id: WrId,
+        signal: bool,
+        inline: bool,
+    ) -> io::Result<()> {
+        let mut sgl = build_sgl(local);
+
+        let mut send_flags = 0;
+        if signal {
+            send_flags |= ibv_exp_send_flags::IBV_EXP_SEND_SIGNALED.0;
+        }
+        if inline {
+            send_flags |= ibv_exp_send_flags::IBV_EXP_SEND_INLINE.0;
+        }
+
+        let mut wr = ibv_exp_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: if local.is_empty() {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
+            num_sge: local.len() as i32,
+            exp_opcode: imm
+                .map(|_| ibv_exp_wr_opcode::IBV_EXP_WR_SEND_WITH_IMM)
+                .unwrap_or(ibv_exp_wr_opcode::IBV_EXP_WR_SEND),
+            exp_send_flags: send_flags,
+            ..unsafe { mem::zeroed() }
+        };
+        wr.set_imm(imm.unwrap_or(0));
+
+        if let Some(peer) = peer.or(self.peer.as_ref()) {
+            match self.qp_type() {
+                QpType::Ud => wr.wr.ud = peer.ud(),
+                QpType::DcIni => wr.dc = peer.dc(),
+                _ => {}
+            };
+        } else if !self.qp_type().has_fixed_peer() {
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                "no peer specified for UD or DCI QP",
+            ));
+        }
+
+        let ret = {
+            let mut bad_wr = ptr::null_mut();
+            // SAFETY: FFI.
+            unsafe { ibv_exp_post_send(self.as_raw(), &mut wr, &mut bad_wr) }
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+
+    #[cfg(mlnx5)]
+    fn send_impl(
+        &self,
+        local: &[MrSlice],
+        peer: Option<&QpPeer>,
+        imm: Option<ImmData>,
+        wr_id: WrId,
+        signal: bool,
+        inline: bool,
+    ) -> io::Result<()> {
+        let mut sgl = build_sgl(local);
+        let mut send_flags = 0;
+
+        if signal {
+            send_flags |= ibv_send_flags::IBV_SEND_SIGNALED.0;
+        }
+        if inline {
+            send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
+        }
+
+        let mut wr = ibv_send_wr {
+            wr_id,
+            next: ptr::null_mut(),
+            sg_list: if local.is_empty() {
+                ptr::null_mut()
+            } else {
+                sgl.as_mut_ptr()
+            },
+            num_sge: local.len() as i32,
+            opcode: imm
+                .map(|_| ibv_wr_opcode::IBV_WR_SEND_WITH_IMM)
+                .unwrap_or(ibv_wr_opcode::IBV_WR_SEND),
+            send_flags,
+            ..unsafe { mem::zeroed() }
+        };
+        wr.set_imm(imm.unwrap_or(0));
+
+        if let Some(peer) = peer.or(self.peer.as_ref()) {
+            wr.wr.ud = peer.ud();
+        }
+        let ret = {
+            let mut bad_wr = ptr::null_mut();
+            // SAFETY: FFI.
+            unsafe { ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr) }
+        };
+        from_c_ret_explained(ret, Self::send_err_explanation)
     }
 }
 
@@ -404,7 +584,7 @@ impl Qp {
     /// Return `None` if the QP is not yet bound to a local port.
     #[inline]
     pub fn endpoint(&self) -> Option<QpEndpoint> {
-        QpEndpoint::new(self)
+        QpEndpoint::of_qp(self)
     }
 
     /// Get the associated send completion queue.
@@ -420,8 +600,7 @@ impl Qp {
     }
 
     /// Bind the queue pair to an active local port.
-    /// Will modify the QP to RTS state if it is an unreliable datagram QP at
-    /// RESET state.
+    /// Will modify the QP to RTS state if it is a UD or DCI QP at RESET state.
     ///
     /// This method is *not* commutative with [`Self::bind_peer()`]. You must
     /// bind the QP to a local port before binding it to a remote peer.
@@ -450,11 +629,18 @@ impl Qp {
         self.local_port = Some((port.clone(), gid_index));
 
         // Bring up QP if UD.
-        if !self.qp_type().is_connected() {
+        if self.qp_type() == QpType::Ud {
             self.modify_reset2init()?;
             self.modify_init2rtr()?;
             self.modify_rtr2rts()?;
         }
+
+        // Bring up QP if Mlnx4 DCI.
+        #[cfg(mlnx4)]
+        if self.qp_type() == QpType::DcIni {
+            self.modify_dcini_reset2rts()?;
+        }
+
         Ok(())
     }
 
@@ -558,39 +744,7 @@ impl Qp {
         signal: bool,
         inline: bool,
     ) -> io::Result<()> {
-        let mut sgl = build_sgl(local);
-        let mut send_flags = 0;
-        if signal {
-            send_flags |= ibv_send_flags::IBV_SEND_SIGNALED.0;
-        }
-        if inline {
-            send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
-        }
-        let mut wr = ibv_send_wr {
-            wr_id,
-            next: ptr::null_mut(),
-            sg_list: if local.is_empty() {
-                ptr::null_mut()
-            } else {
-                sgl.as_mut_ptr()
-            },
-            num_sge: local.len() as i32,
-            opcode: imm
-                .map(|_| ibv_wr_opcode::IBV_WR_SEND_WITH_IMM)
-                .unwrap_or(ibv_wr_opcode::IBV_WR_SEND),
-            send_flags,
-            ..unsafe { mem::zeroed() }
-        };
-        wr.set_imm(imm.unwrap_or(0));
-
-        if let Some(peer) = peer.or(self.peer.as_ref()) {
-            wr.wr.ud = peer.ud();
-        }
-        let ret = unsafe {
-            let mut bad_wr = ptr::null_mut();
-            ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr)
-        };
-        from_c_ret_explained(ret, Self::send_err_explanation)
+        self.send_impl(local, peer, imm, wr_id, signal, inline)
     }
 
     /// Post an RDMA read request.
@@ -793,7 +947,7 @@ impl Qp {
         &self,
         local: &MrSlice,
         remote: &MrRemote,
-        params: ExtCompareSwapParams,
+        params: &ExtCompareSwapParams,
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
@@ -805,9 +959,14 @@ impl Qp {
             next: ptr::null_mut(),
             sg_list: sgl.as_mut_ptr(),
             num_sge: 1,
-            exp_opcode: IBV_EXP_WR_EXT_MASKED_ATOMIC_CMP_AND_SWP,
-            exp_send_flags: IBV_EXP_SEND_EXT_ATOMIC_INLINE
-                | if signal { IBV_EXP_SEND_SIGNALED } else { 0 },
+            exp_opcode: ibv_exp_wr_opcode::IBV_EXP_WR_EXT_MASKED_ATOMIC_CMP_AND_SWP,
+            exp_send_flags: (ibv_exp_send_flags::IBV_EXP_SEND_EXT_ATOMIC_INLINE
+                | if signal {
+                    ibv_exp_send_flags::IBV_EXP_SEND_SIGNALED
+                } else {
+                    ibv_exp_send_flags(0)
+                })
+            .0,
             ..unsafe { mem::zeroed() }
         };
 
@@ -851,7 +1010,7 @@ impl Qp {
     ///
     /// `add` and `mask` must be valid and properly aligned pointers.
     #[cfg(mlnx4)]
-    pub fn ext_fetch_add<const N: usize>(
+    pub unsafe fn ext_fetch_add<const N: usize>(
         &self,
         local: &MrSlice,
         remote: &MrRemote,
@@ -868,9 +1027,14 @@ impl Qp {
             next: ptr::null_mut(),
             sg_list: sgl.as_mut_ptr(),
             num_sge: 1,
-            exp_opcode: IBV_EXP_WR_EXT_MASKED_ATOMIC_FETCH_AND_ADD,
-            exp_send_flags: IBV_EXP_SEND_EXT_ATOMIC_INLINE
-                | if signal { IBV_EXP_SEND_SIGNALED } else { 0 },
+            exp_opcode: ibv_exp_wr_opcode::IBV_EXP_WR_EXT_MASKED_ATOMIC_FETCH_AND_ADD,
+            exp_send_flags: (ibv_exp_send_flags::IBV_EXP_SEND_EXT_ATOMIC_INLINE
+                | if signal {
+                    ibv_exp_send_flags::IBV_EXP_SEND_SIGNALED
+                } else {
+                    ibv_exp_send_flags(0)
+                })
+            .0,
             ..unsafe { mem::zeroed() }
         };
 

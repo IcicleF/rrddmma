@@ -76,6 +76,11 @@ impl QpType {
     pub const fn is_target(self) -> bool {
         self.is_target_impl()
     }
+
+    /// Determine whether the QP type has a fixed peer.
+    pub const fn has_fixed_peer(self) -> bool {
+        matches!(self, Self::Rc | Self::Uc | Self::XrcIni)
+    }
 }
 
 impl From<QpType> for u32 {

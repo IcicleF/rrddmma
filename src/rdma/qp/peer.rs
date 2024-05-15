@@ -3,32 +3,51 @@ use std::io::{self, Error as IoError};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use crate::rdma::{gid::Gid, pd::Pd, qp::Qp, type_alias::*};
-
 use crate::bindings::*;
+use crate::rdma::{dct::Dct, gid::Gid, pd::Pd, qp::Qp, type_alias::*};
 use crate::utils::interop::from_c_ret;
 
-/// Endpoint (NIC port & queue pair) data.
+/// Endpoint (NIC port & queue pair / DCT) data.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct QpEndpoint {
+    /// Endpoint GID.
     pub gid: Gid,
+
+    /// Port LID.
     pub lid: Lid,
+
+    /// Port index.
     pub port_num: PortNum,
-    pub qpn: Qpn,
+
+    /// QP or DCT number.
+    pub num: Qpn,
 }
 
 impl QpEndpoint {
-    /// Create a new endpoint from a queue pair.
-    pub fn new(qp: &Qp) -> Option<Self> {
+    /// Create an endpoint reprensenting a regular queue pair.
+    /// Return `None` if the Qp is not yet bound to a local port.
+    pub fn of_qp(qp: &Qp) -> Option<Self> {
         let (port, gid_idx) = qp.port()?;
         let gid = port.gids()[*gid_idx as usize];
 
-        Some(QpEndpoint {
+        Some(Self {
             gid: gid.gid,
             port_num: port.num(),
             lid: port.lid(),
-            qpn: qp.qp_num(),
+            num: qp.qp_num(),
         })
+    }
+
+    /// Create an endpoint representing a DCT.
+    pub fn of_dct(dct: &Dct) -> Self {
+        let init_attr = dct.init_attr();
+        let gid = init_attr.port.gids()[init_attr.gid_index as usize];
+        Self {
+            gid: gid.gid,
+            port_num: init_attr.port.num(),
+            lid: init_attr.port.lid(),
+            num: dct.dct_num(),
+        }
     }
 }
 
@@ -72,8 +91,8 @@ pub struct QpPeer {
     /// Cached address handle pointer.
     ah: IbvAh,
 
-    /// Cached QPN.
-    qpn: Qpn,
+    /// QP or DCT number.
+    num: Qpn,
 
     /// Peer information body.
     inner: Arc<QpPeerInner>,
@@ -88,7 +107,7 @@ impl fmt::Debug for QpPeer {
 }
 
 impl QpPeer {
-    /// Create a new peer.
+    /// Create a new peer that represents a regular QP or a DCT.
     pub(crate) fn new(pd: &Pd, sgid_index: GidIndex, ep: QpEndpoint) -> io::Result<Self> {
         let mut ah_attr = ibv_ah_attr {
             grh: ibv_global_route {
@@ -111,7 +130,6 @@ impl QpPeer {
         let ah = NonNull::new(ah).ok_or_else(IoError::last_os_error)?;
         let ah = IbvAh(ah);
 
-        let qpn = ep.qpn;
         Ok(Self {
             inner: Arc::new(QpPeerInner {
                 _pd: pd.clone(),
@@ -119,18 +137,29 @@ impl QpPeer {
                 ep,
             }),
             ah,
-            qpn,
+            num: ep.num,
         })
     }
 
-    /// Return a handle that can be used in RDMA sends to this peer.
+    /// Return a handle that can be used in RDMA UD sends to this peer.
     /// The return type is opaque to the user; you may only copy assign it to [`ibv_send_wr::wr`].
     #[inline]
     pub fn ud(&self) -> ud_t {
         ud_t {
             ah: self.ah.as_ptr(),
-            remote_qpn: self.qpn,
+            remote_qpn: self.num,
             remote_qkey: Qp::GLOBAL_QKEY,
+        }
+    }
+
+    /// Return a handle that can be used in RDMA DC send-type verbs to this peer.
+    /// The return type is opaque to the user; you may only copy assign it to [`ibv_exp_send_wr::dc`].
+    #[inline]
+    pub fn dc(&self) -> dc_t {
+        dc_t {
+            ah: self.ah.as_ptr(),
+            dct_number: self.num,
+            dct_access_key: Dct::GLOBAL_DC_KEY,
         }
     }
 }

@@ -30,6 +30,12 @@ impl From<Permission> for i32 {
     }
 }
 
+impl From<Permission> for u32 {
+    fn from(p: Permission) -> Self {
+        p.0 .0
+    }
+}
+
 #[allow(clippy::suspicious_arithmetic_impl)]
 impl Add for Permission {
     type Output = Self;
