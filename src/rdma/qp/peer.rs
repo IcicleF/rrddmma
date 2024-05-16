@@ -4,7 +4,9 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use crate::bindings::*;
-use crate::rdma::{dct::Dct, gid::Gid, pd::Pd, qp::Qp, type_alias::*};
+#[cfg(mlnx4)]
+use crate::rdma::dct::Dct;
+use crate::rdma::{gid::Gid, pd::Pd, qp::Qp, type_alias::*};
 use crate::utils::interop::from_c_ret;
 
 /// Endpoint (NIC port & queue pair / DCT) data.
@@ -39,6 +41,7 @@ impl QpEndpoint {
     }
 
     /// Create an endpoint representing a DCT.
+    #[cfg(mlnx4)]
     pub fn of_dct(dct: &Dct) -> Self {
         let init_attr = dct.init_attr();
         let gid = init_attr.port.gids()[init_attr.gid_index as usize];
@@ -154,6 +157,7 @@ impl QpPeer {
 
     /// Return a handle that can be used in RDMA DC send-type verbs to this peer.
     /// The return type is opaque to the user; you may only copy assign it to [`ibv_exp_send_wr::dc`].
+    #[cfg(mlnx4)]
     #[inline]
     pub fn dc(&self) -> dc_t {
         dc_t {

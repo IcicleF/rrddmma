@@ -1,9 +1,9 @@
 //! Queue pair and related types.
 
-use std::{fmt, mem, ptr};
 use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::ptr::NonNull;
 use std::sync::Arc;
+use std::{fmt, mem, ptr};
 
 use thiserror::Error;
 
@@ -11,13 +11,15 @@ use crate::bindings::*;
 use crate::rdma::{
     context::Context,
     cq::Cq,
-    dct::Dct,
     mr::*,
     nic::{Port, PortState},
     pd::Pd,
     type_alias::*,
 };
 use crate::utils::interop::*;
+
+#[cfg(mlnx4)]
+use crate::rdma::dct::Dct;
 
 pub use self::builder::*;
 pub use self::params::*;
@@ -188,7 +190,7 @@ impl Qp {
         fn do_create_qp(pd: &Pd, init_attr: &QpInitAttr) -> *mut ibv_qp {
             let mut init_attr = init_attr.to_init_attr();
             // SAFETY: FFI.
-            unsafe { ibv_create_qp(pd, &mut init_attr) }
+            unsafe { ibv_create_qp(pd.as_raw(), &mut init_attr) }
         }
 
         let qp = do_create_qp(pd, &init_attr);
