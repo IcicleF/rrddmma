@@ -1,9 +1,9 @@
 //! Queue pair and related types.
 
+use std::{fmt, mem, ptr};
 use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::{fmt, mem, ptr};
 
 use thiserror::Error;
 
@@ -16,10 +16,9 @@ use crate::rdma::{
     pd::Pd,
     type_alias::*,
 };
-use crate::utils::interop::*;
-
 #[cfg(mlnx4)]
 use crate::rdma::dct::Dct;
+use crate::utils::interop::*;
 
 pub use self::builder::*;
 pub use self::params::*;
@@ -172,18 +171,9 @@ impl Qp {
 
         #[cfg(mlnx4)]
         fn do_create_qp(pd: &Pd, init_attr: &QpInitAttr) -> *mut ibv_qp {
-            match init_attr.qp_type {
-                // QpType::DcIni => {
-                //     let mut init_attr = init_attr.to_init_attr_ex(pd);
-                //     // SAFETY: FFI.
-                //     unsafe { ibv_create_qp_ex(pd.context().as_raw(), &mut init_attr) }
-                // }
-                _ => {
-                    let mut init_attr = init_attr.to_exp_init_attr(pd);
-                    // SAFETY: FFI.
-                    unsafe { ibv_exp_create_qp(pd.context().as_raw(), &mut init_attr) }
-                }
-            }
+            let mut init_attr = init_attr.to_exp_init_attr(pd);
+            // SAFETY: FFI.
+            unsafe { ibv_exp_create_qp(pd.context().as_raw(), &mut init_attr) }
         }
 
         #[cfg(mlnx5)]
@@ -651,7 +641,7 @@ impl Qp {
     /// and already bound to a local port.
     ///
     /// If the QP is UD, this method will not modify the QP. Instead, it sets
-    /// the default target for all sends.
+    /// the default target for sends.
     ///
     /// This method is *not* commutative with [`Self::bind_local_port()`].
     /// You must bind the QP to a local port before binding it to a remote peer.
@@ -659,16 +649,26 @@ impl Qp {
     /// # Panics
     ///
     /// - Panic if the QP is not yet bound to a local port.
-    /// - Panic if the QP is connected and already bound to a remote peer.
+    /// - Panic if the QP is connected (except for DCI) and already bound to a remote peer.
+    ///
+    /// # Caveats
+    ///
+    /// - For DC initiator QPs, you may call this method multiple times without erring.
+    ///   However, this is *not recommended* as every time you call this method, a new `QpPeer`
+    ///   will be created to replace the old one, during which `ibv_ah`s will also be created,
+    ///   causing suboptimal performance. Use [`make_peer`](Self::make_peer) then
+    ///   [`set_dc_peer`](Self::set_dc_peer) instead.
     pub fn bind_peer(&mut self, ep: QpEndpoint) -> io::Result<()> {
         assert!(
             self.local_port.is_some(),
             "QP not yet bound to a local port"
         );
-        assert!(
-            !(self.qp_type().is_connected() && self.peer.is_some()),
-            "QP already bound to a remote peer"
-        );
+        if self.qp_type() == QpType::Rc {
+            assert!(
+                !(self.qp_type().is_connected() && self.peer.is_some()),
+                "QP already bound to a remote peer"
+            );
+        }
 
         self.peer = Some(QpPeer::new(
             self.pd(),
@@ -677,7 +677,7 @@ impl Qp {
         )?);
 
         // Bring up QP.
-        if self.qp_type().is_connected() {
+        if self.qp_type() == QpType::Rc {
             self.modify_reset2init()?;
             self.modify_init2rtr()?;
             self.modify_rtr2rts()?;
@@ -685,14 +685,20 @@ impl Qp {
         Ok(())
     }
 
-    /// Reset the QP.
-    /// Modify the QP to RESET state and clear any local port or remote peer
-    /// bindings.
-    pub fn reset(&mut self) -> io::Result<()> {
-        self.modify_2reset()?;
-        self.local_port.take();
-        self.peer.take();
-        Ok(())
+    /// Set the peer for this QP.
+    /// Send-type verbs will be sent to this peer until the next call to this method.
+    ///
+    /// # Panics
+    ///
+    /// Panic if this QP is not a DC initiator.
+    pub fn set_dc_peer(&mut self, peer: &QpPeer) {
+        #[cfg(mlnx4)]
+        const EXPECTED_QP_TYPE: QpType = QpType::DcIni;
+        #[cfg(mlnx5)]
+        const EXPECTED_QP_TYPE: QpType = QpType::Driver;
+
+        assert_eq!(self.qp_type(), EXPECTED_QP_TYPE, "QP is not a DC initiator");
+        self.peer = Some(peer.clone());
     }
 
     /// Create a new peer that is reachable from this QP.
@@ -703,6 +709,16 @@ impl Qp {
     /// Panic if this QP is not bound to a local port.
     pub fn make_peer(&self, ep: &QpEndpoint) -> io::Result<QpPeer> {
         QpPeer::new(self.pd(), self.local_port.as_ref().unwrap().1, *ep)
+    }
+
+    /// Reset the QP.
+    /// Modify the QP to RESET state and clear any local port or remote peer
+    /// bindings.
+    pub fn reset(&mut self) -> io::Result<()> {
+        self.modify_2reset()?;
+        self.local_port.take();
+        self.peer.take();
+        Ok(())
     }
 
     /// Post a RDMA recv request.
@@ -990,6 +1006,12 @@ impl Qp {
                 cmp_swap.swap_val = params.swap.as_ptr() as usize as u64;
                 cmp_swap.swap_mask = params.swap_mask.as_ptr() as usize as u64;
             }
+        }
+
+        // Set the peer if this is a DCI QP.
+        if self.qp_type() == QpType::DcIni {
+            let peer = self.peer.as_ref().unwrap();
+            wr.dc = peer.dc();
         }
 
         // SAFETY: FFI.

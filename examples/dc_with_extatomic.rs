@@ -1,39 +1,43 @@
+use std::ptr;
+use std::ptr::NonNull;
+
+use rrddmma::rdma::qp::ExtCompareSwapParams;
+
 #[cfg(mlnx5)]
 fn main() {
-    eprintln!("MLNX_OFED v5.x or newer does not support ExtAtomics");
+    eprintln!("DC is not yet implemented on MLNX v5.x");
 }
 
 #[cfg(mlnx4)]
 fn main() -> anyhow::Result<()> {
-    use rrddmma::rdma::qp::{ExpFeature, ExtCompareSwapParams};
-    use rrddmma::{ctrl, prelude::*, wrap::RegisteredMem};
-    use std::{
-        net::Ipv4Addr,
-        ptr::{self, NonNull},
-        thread,
-    };
+    use rrddmma::{prelude::*, wrap::RegisteredMem};
+    use std::thread;
 
     const LEN: usize = 16;
 
-    fn make_qp(dev: &str) -> anyhow::Result<Qp> {
-        let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;
-        let pd = Pd::new(&context)?;
-        let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
-        let mut qp = Qp::builder()
-            .qp_type(QpType::Rc)
-            .caps(QpCaps::default())
-            .send_cq(&cq)
-            .recv_cq(&cq)
-            .sq_sig_all(true)
-            .enable_feature(ExpFeature::ExtendedAtomics, 16)
-            .build(&pd)?;
-        qp.bind_local_port(&ports[0], None)?;
-        Ok(qp)
-    }
+    fn client(ep: QpEndpoint, remote: MrRemote) -> anyhow::Result<()> {
+        fn make_dci(dev: &str) -> anyhow::Result<Qp> {
+            use rrddmma::rdma::qp::ExpFeature::*;
 
-    fn client(remote: MrRemote) -> anyhow::Result<()> {
-        let mut qp = make_qp("mlx5_0")?;
-        ctrl::Connecter::new(Some(Ipv4Addr::LOCALHOST))?.connect(&mut qp)?;
+            let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;
+            let pd = Pd::new(&context)?;
+            let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
+            let mut qp = Qp::builder()
+                .qp_type(QpType::DcIni)
+                .caps(QpCaps::for_dc_ini())
+                .send_cq(&cq)
+                .recv_cq(&cq)
+                .sq_sig_all(true)
+                .enable_feature(ExtendedAtomics, 16)
+                .build(&pd)?;
+            qp.bind_local_port(&ports[0], None)?;
+            Ok(qp)
+        }
+
+        let mut qp =
+            make_dci("mlx5_0").inspect_err(|e| eprintln!("Err in creating DCI QP: {:?}", e))?;
+        let peer = qp.make_peer(&ep)?;
+        qp.set_dc_peer(&peer);
 
         // Issue a CAS.
         fn ptr_to(val: &[u64; 2]) -> NonNull<u64> {
@@ -66,16 +70,29 @@ fn main() -> anyhow::Result<()> {
         Ok(())
     }
 
-    let mut qp = make_qp("mlx5_0")?;
-    let mut mem = RegisteredMem::new(qp.pd(), 4096)?;
+    fn make_dct(dev: &str) -> anyhow::Result<Dct> {
+        let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;
+        let pd = Pd::new(&context)?;
+        let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
+        let dct = Dct::builder()
+            .pd(&pd)
+            .cq(&cq)
+            .port(&ports[0], None)
+            .inline_size(64)
+            .build(&context)?;
+        Ok(dct)
+    }
+
+    let dct = make_dct("mlx5_0")?;
+    let mut mem = RegisteredMem::new(dct.pd(), 4096)?;
     unsafe {
         ptr::write_volatile(mem.as_mut_ptr() as *mut u64, 0x0123456789abcdefu64);
         ptr::write_volatile(mem.as_mut_ptr().add(8) as *mut u64, 0x1145141919810abcu64);
     }
-
     let slice = MrRemote::from(mem.slice(0, LEN).unwrap());
-    let cli = thread::spawn(move || client(slice));
-    ctrl::Connecter::new(None)?.connect(&mut qp)?;
+
+    let ep = dct.endpoint();
+    let cli = thread::spawn(move || client(ep, slice));
 
     cli.join().unwrap()?;
     unsafe {

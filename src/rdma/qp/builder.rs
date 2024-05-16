@@ -14,10 +14,14 @@ use super::{Qp, QpCreationError, QpType};
 pub enum ExpFeature {
     /// Enable extended atomic compare-and-swap & fetch-and-add.
     ///
-    /// The value is the maximum atomic argument size in bytes (e.g., 8).
-    /// Maximum is usually 32 bytes. Minimum is 8 bytes.
-    ///
     /// **NOTE:** Possibly buggy when using DC QPs.
+    ///
+    /// # Argument
+    ///
+    /// The argument that needs to be provided when setting this feature
+    /// is the maximum atomic argument size in bytes (e.g., 8).
+    /// The value should be a power of two.
+    /// Maximum is usually 32 bytes. Minimum is 8 bytes.
     ExtendedAtomics,
 }
 
@@ -186,6 +190,8 @@ impl<'a> QpBuilder<'a> {
     }
 
     /// Enable experimental features for the QP.
+    ///
+    /// Enabling the same feature multiple times will overwrite the previous value.
     #[cfg(mlnx4)]
     pub fn enable_feature(mut self, feature: ExpFeature, value: u32) -> Self {
         self.features.insert(feature, value);
