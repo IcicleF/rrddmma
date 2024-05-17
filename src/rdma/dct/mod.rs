@@ -1,9 +1,9 @@
 //! Dynamically-connected target (DCT).
 #![cfg(mlnx4)]
 
-use std::{fmt, io, mem};
 use std::ptr::NonNull;
 use std::sync::Arc;
+use std::{fmt, io, mem};
 
 use thiserror::Error;
 
@@ -92,19 +92,9 @@ impl Dct {
     pub(crate) fn init_attr(&self) -> &DctInitAttr {
         &self.inner.init_attr
     }
-}
-
-impl Dct {
-    /// Global DC Key.
-    pub const GLOBAL_DC_KEY: u64 = 0x1919810;
-
-    /// Return a new DCT builder.
-    pub fn builder<'a>() -> DctBuilder<'a> {
-        Default::default()
-    }
 
     /// Create a new DCT.
-    pub fn new(ctx: &Context, builder: DctBuilder) -> Result<Self, DctCreationError> {
+    pub(crate) fn new(ctx: &Context, builder: DctBuilder) -> Result<Self, DctCreationError> {
         let init_attr = builder.unwrap()?;
         let dct = {
             let mut init_attr = init_attr.to_init_attr();
@@ -143,6 +133,16 @@ impl Dct {
             dct,
         };
         Ok(dct)
+    }
+}
+
+impl Dct {
+    /// Global DC Key.
+    pub const GLOBAL_DC_KEY: u64 = 0x1919810;
+
+    /// Return a new DCT builder.
+    pub fn builder<'a>() -> DctBuilder<'a> {
+        Default::default()
     }
 
     /// Get the underlying `ibv_exp_dct` pointer.

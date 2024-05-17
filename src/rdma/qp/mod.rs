@@ -1,13 +1,15 @@
 //! Queue pair and related types.
 
-use std::{fmt, mem, ptr};
 use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::ptr::NonNull;
 use std::sync::Arc;
+use std::{fmt, mem, ptr};
 
 use thiserror::Error;
 
 use crate::bindings::*;
+#[cfg(mlnx4)]
+use crate::rdma::dct::Dct;
 use crate::rdma::{
     context::Context,
     cq::Cq,
@@ -16,8 +18,6 @@ use crate::rdma::{
     pd::Pd,
     type_alias::*,
 };
-#[cfg(mlnx4)]
-use crate::rdma::dct::Dct;
 use crate::utils::interop::*;
 
 pub use self::builder::*;
@@ -748,11 +748,17 @@ impl Qp {
     ///
     /// If `peer` is `None`, this QP is expected to be connected and the Send
     /// will go to the remote end of the connection. Otherwise, this QP is
-    /// expected to be UD and the Send will go to the specified peer.
+    /// expected to be DC or UD, and the Send will go to the specified peer.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the send
     /// by some means, for example by polling the send CQ.
+    ///
+    /// # Applicability
+    ///
+    /// | QP Type | RC | UC | UD | DC |
+    /// |---------|----|----|----|----|
+    /// | OK?     | Y  | Y  | Y  | Y  |
     pub fn send(
         &self,
         local: &[MrSlice],
@@ -765,14 +771,19 @@ impl Qp {
         self.send_impl(local, peer, imm, wr_id, signal, inline)
     }
 
-    /// Post an RDMA read request.
-    /// Only valid for RC QPs.
+    /// Post an RDMA read request
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the write
     /// by some means, for example by polling the send CQ. Also, this method has
     /// no mutable borrows to its parameters, but can cause the content of the
     /// buffers to be modified!
+    ///
+    /// # Applicability
+    ///
+    /// | QP Type | RC | UC | UD | DC |
+    /// |---------|----|----|----|----|
+    /// | OK?     | Y  | N  | N  | N  |
     pub fn read(
         &self,
         local: &[MrSlice],
@@ -809,11 +820,16 @@ impl Qp {
     }
 
     /// Post an RDMA write request.
-    /// Only valid for RC QPs.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the write
     /// by some means, for example by polling the send CQ.
+    ///
+    /// # Applicability
+    ///
+    /// | QP Type | RC | UC | UD | DC |
+    /// |---------|----|----|----|----|
+    /// | OK?     | Y  | Y  | N  | N  |
     pub fn write(
         &self,
         local: &[MrSlice],
@@ -822,6 +838,8 @@ impl Qp {
         imm: Option<ImmData>,
         signal: bool,
     ) -> io::Result<()> {
+        assert!(matches!(self.qp_type(), QpType::Rc | QpType::Uc));
+
         let mut sgl = build_sgl(local);
         let mut wr = ibv_send_wr {
             wr_id,
@@ -855,11 +873,14 @@ impl Qp {
     }
 
     /// Post an RDMA atomic compare-and-swap (CAS) request.
-    /// Only valid for RC QPs.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the CAS
-    /// by some means, for example by polling the send CQ.
+    /// by some means, for example by polling the send CQ.    /// # Applicability
+    ///
+    /// | QP Type | RC | UC | UD | DC |
+    /// |---------|----|----|----|----|
+    /// | OK?     | Y  | N  | N  | N  |
     #[inline]
     pub fn compare_swap(
         &self,
@@ -903,11 +924,16 @@ impl Qp {
     }
 
     /// Post an RDMA atomic fetch-and-add (FAA) request.
-    /// Only valid for RC QPs.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_post_send`.
     /// It is the caller's responsibility to ensure the completion of the FAA
     /// by some means, for example by polling the send CQ.
+    ///
+    /// # Applicability
+    ///
+    /// | QP Type | RC | UC | UD | DC |
+    /// |---------|----|----|----|----|
+    /// | OK?     | Y  | N  | N  | N  |
     #[inline]
     pub fn fetch_add(
         &self,
@@ -950,8 +976,9 @@ impl Qp {
     }
 
     /// Post an RDMA extended atomic compare-and-swap (CAS) request.
-    /// Only available with MLNX_OFED v4.x driver, and for RC QPs that enabled
-    /// extended atomics when building.
+    ///
+    /// The generic parameter `N` is the size of the compare-and-swap operands.
+    /// It must be a power of two. Currently, only 8, 16, and 32 are supported.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_exp_post_send`.
     /// It is the caller's responsibility to ensure the completion of the CAS
@@ -960,6 +987,17 @@ impl Qp {
     /// # Safety
     ///
     /// All pointers specified in `params` must be valid and properly aligned.
+    ///
+    /// # Caveats
+    ///
+    /// When `N` is greater than 8 (i.e., 16 or 32), the return value stored in
+    /// `local` will have its byte endian *reversed* in every 8-byte unit.
+    ///
+    /// # Applicability
+    ///
+    /// | QP Type | RC | UC | UD | DC |
+    /// |---------|----|----|----|----|
+    /// | OK?     | Y  | N  | N  | Y  |
     #[cfg(mlnx4)]
     pub unsafe fn ext_compare_swap<const N: usize>(
         &self,
@@ -1023,8 +1061,9 @@ impl Qp {
     }
 
     /// Post an RDMA extended atomic fetch-and-add (FAA) request.
-    /// Only available with MLNX_OFED v4.x driver, and for RC QPs that enabled
-    /// extended atomics when building.
+    ///
+    /// The generics parameter `N` is the size of the fetch-and-add operands.
+    /// It must be a power of two. Currently, only 8, 16, and 32 are supported.
     ///
     /// **NOTE:** this function is only equivalent to calling `ibv_exp_post_send`.
     /// It is the caller's responsibility to ensure the completion of the FAA
@@ -1033,6 +1072,17 @@ impl Qp {
     /// # Safety
     ///
     /// `add` and `mask` must be valid and properly aligned pointers.
+    ///
+    /// # Caveats
+    ///
+    /// When `N` is greater than 8 (i.e., 16 or 32), the return value stored in
+    /// `local` will have its byte endian *reversed* in every 8-byte unit.
+    ///
+    /// # Applicability
+    ///
+    /// | QP Type | RC | UC | UD | DC |
+    /// |---------|----|----|----|----|
+    /// | OK?     | Y  | N  | N  | Y  |
     #[cfg(mlnx4)]
     pub unsafe fn ext_fetch_add<const N: usize>(
         &self,
@@ -1076,6 +1126,12 @@ impl Qp {
                 fetch_add.add_val = add.as_ptr() as usize as u64;
                 fetch_add.field_boundary = mask.as_ptr() as usize as u64;
             }
+        }
+
+        // Set the peer if this is a DCI QP.
+        if self.qp_type() == QpType::DcIni {
+            let peer = self.peer.as_ref().unwrap();
+            wr.dc = peer.dc();
         }
 
         // SAFETY: FFI.

@@ -30,6 +30,9 @@ pub mod errors {
     pub use super::rdma::gid::GidQueryError;
     pub use super::rdma::nic::{NicProbeError, PortQueryError};
     pub use super::rdma::qp::QpCreationError;
+
+    #[cfg(mlnx4)]
+    pub use super::rdma::dct::DctCreationError;
 }
 
 /// Connection management utilities.

@@ -217,3 +217,32 @@ pub use self::private::ibv_destroy_ah;
 
 /// Address handle.
 pub use self::private::ibv_ah;
+
+#[cfg(mlnx4)]
+pub use self::private::ibv_exp_create_qp;
+
+#[cfg(mlnx4)]
+pub use self::private::ibv_exp_modify_qp;
+
+#[cfg(mlnx4)]
+pub use self::private::ibv_exp_post_send;
+
+#[cfg(mlnx4)]
+/// Experimental QP attributes.
+pub use self::private::ibv_exp_qp_attr;
+
+#[cfg(mlnx4)]
+/// Experimental QP initialization attributes.
+pub use self::private::ibv_exp_qp_init_attr;
+
+#[cfg(mlnx4)]
+/// Experimental send flags.
+pub use self::private::ibv_exp_send_flags;
+
+#[cfg(mlnx4)]
+/// Experimental send work request.
+pub use self::private::ibv_exp_send_wr;
+
+#[cfg(mlnx4)]
+/// Experimental send opcode.
+pub use self::private::ibv_exp_wr_opcode;
