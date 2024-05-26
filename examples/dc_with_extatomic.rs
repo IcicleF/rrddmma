@@ -36,8 +36,8 @@ fn main() -> anyhow::Result<()> {
 
         let mut qp =
             make_dci("mlx5_0").inspect_err(|e| eprintln!("Err in creating DCI QP: {:?}", e))?;
-        let peer = qp.make_peer(&ep)?;
-        qp.set_dc_peer(&peer);
+        let peer = qp.make_peer(ep)?;
+        qp.set_dc_peer(peer);
 
         // Issue a CAS.
         fn ptr_to(val: &[u64; 2]) -> NonNull<u64> {

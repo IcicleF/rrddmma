@@ -9,7 +9,7 @@ use crate::bindings::*;
 /// in RDMA data-plane verbs.
 ///
 /// **Subtyping:** [`MrSlice<'a>`] is *covariant* over `'a`.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct MrSlice<'a> {
     mr: &'a Mr,
     offset: usize,

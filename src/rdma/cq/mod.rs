@@ -18,7 +18,7 @@ use crate::utils::interop::from_c_ret;
 /// Wrapper for `*mut ibv_cq`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub(crate) struct IbvCq(NonNull<ibv_cq>);
+pub(crate) struct IbvCq(Option<NonNull<ibv_cq>>);
 
 impl IbvCq {
     /// Destroy the CQ.
@@ -87,7 +87,7 @@ impl Cq {
             )
         };
         let cq = NonNull::new(cq).ok_or_else(IoError::last_os_error)?;
-        let cq = IbvCq(cq);
+        let cq = IbvCq::from(cq);
 
         Ok(Self {
             inner: Arc::new(CqInner {

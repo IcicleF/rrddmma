@@ -12,7 +12,7 @@ use crate::utils::interop::{from_c_err, from_c_ret};
 /// Wrapper for `*mut ibv_context`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct IbvContext(NonNull<ibv_context>);
+pub(crate) struct IbvContext(Option<NonNull<ibv_context>>);
 
 impl IbvContext {
     /// Get the underlying [`IbvDevice`] pointer.
@@ -42,8 +42,13 @@ impl IbvContext {
     /// - Closed contextes must not be used anymore.
     pub unsafe fn close(self) -> io::Result<()> {
         // SAFETY: FFI.
-        let ret = ibv_close_device(self.as_ptr());
-        from_c_ret(ret)
+        match self.0 {
+            Some(ctx) => {
+                let ret = ibv_close_device(ctx.as_ptr());
+                from_c_ret(ret)
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -84,13 +89,33 @@ impl Context {
 
 impl Context {
     /// Get the underlying [`ibv_context`] pointer.
-    #[inline]
     pub fn as_raw(&self) -> *mut ibv_context {
         self.ctx.as_ptr()
     }
 
+    /// Consume and leak the `Context`, returning the underlying [`ibv_context`] pointer.
+    /// The method receiver must be the only instance of the same context, i.e.,
+    ///
+    /// - none of its clones may be alive
+    /// - no [`Pd`](crate::prelude::Pd)s or [`Cq`](crate::prelude::Cq)s created from it may be alive
+    ///
+    /// otherwise, this method fails.
+    pub fn leak(mut self) -> Result<*mut ibv_context, Self> {
+        let mut inner = {
+            let inner = Arc::try_unwrap(self.inner);
+            match inner {
+                Ok(inner) => inner,
+                Err(inner) => {
+                    self.inner = inner;
+                    return Err(self);
+                }
+            }
+        };
+        let ctx = inner.ctx.0.take().unwrap();
+        Ok(ctx.as_ptr())
+    }
+
     /// Get the device attributes.
-    #[inline]
     pub fn attr(&self) -> &ibv_device_attr {
         &self.inner.attr
     }

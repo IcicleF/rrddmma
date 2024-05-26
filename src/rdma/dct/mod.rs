@@ -18,7 +18,7 @@ mod builder;
 /// Wrapper for `*mut ibv_exp_dct`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub(crate) struct IbvExpDct(NonNull<ibv_exp_dct>);
+pub(crate) struct IbvExpDct(Option<NonNull<ibv_exp_dct>>);
 
 impl IbvExpDct {
     /// Destroy the DCT.
@@ -102,7 +102,7 @@ impl Dct {
             unsafe { ibv_exp_create_dct(ctx.as_raw(), &mut init_attr) }
         };
         let dct = NonNull::new(dct).ok_or_else(io::Error::last_os_error)?;
-        let dct = IbvExpDct(dct);
+        let dct = IbvExpDct::from(dct);
 
         // Query the DCT to ensure things actually work.
         {

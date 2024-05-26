@@ -35,8 +35,6 @@ pub mod errors {
     pub use super::rdma::dct::DctCreationError;
 }
 
-/// Connection management utilities.
 pub mod ctrl;
-
-/// Higher-level wrappings of RDMA resources.
+pub mod mlnx;
 pub mod wrap;

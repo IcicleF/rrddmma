@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         let qp = make_dci("mlx5_0").inspect_err(|e| eprintln!("Err: {:?}", e))?;
-        let peer = qp.make_peer(&ep)?;
+        let peer = qp.make_peer(ep)?;
 
         // Send the message to the server.
         let mem = RegisteredMem::new_with_content(qp.pd(), "Hello, rrddmma!".as_bytes())?;

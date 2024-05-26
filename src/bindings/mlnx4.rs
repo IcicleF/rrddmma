@@ -1,7 +1,7 @@
 use libc::*;
 
-use super::*;
 pub use super::common::*;
+use super::*;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -419,6 +419,26 @@ pub unsafe fn ibv_exp_post_send(
         -ENOSYS
     } else {
         (*vctx).drv_exp_post_send.unwrap()(qp, wr, bad_wr)
+    }
+}
+
+/// Create an experimental shared receive queue.
+#[inline]
+pub unsafe fn ibv_exp_create_srq(
+    context: *mut ibv_context,
+    attr: *mut ibv_exp_create_srq_attr,
+) -> *mut ibv_srq {
+    let vctx = verbs_get_exp_ctx_op!(context, exp_create_srq);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS;
+        std::ptr::null_mut()
+    } else {
+        IBV_EXP_RET_NULL_ON_INVALID_COMP_MASK_compat!(
+            (*attr).comp_mask,
+            IBV_EXP_CREATE_SRQ_RESERVED - 1,
+            "ibv_exp_create_srq"
+        );
+        (*vctx).exp_create_srq.unwrap()(context, attr)
     }
 }
 

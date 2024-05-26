@@ -1,3 +1,5 @@
+//! Connection management utilities.
+
 /// TCP-based connection builder.
 mod connecter;
 

@@ -56,7 +56,7 @@ impl QpEndpoint {
 
 /// Wrapper of [`*mut ibv_ah`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct IbvAh(NonNull<ibv_ah>);
+pub(crate) struct IbvAh(Option<NonNull<ibv_ah>>);
 
 impl IbvAh {
     /// Destroy the address handle.
@@ -131,7 +131,7 @@ impl QpPeer {
         // SAFETY: FFI.
         let ah = unsafe { ibv_create_ah(pd.as_raw(), &mut ah_attr) };
         let ah = NonNull::new(ah).ok_or_else(IoError::last_os_error)?;
-        let ah = IbvAh(ah);
+        let ah = IbvAh::from(ah);
 
         Ok(Self {
             inner: Arc::new(QpPeerInner {

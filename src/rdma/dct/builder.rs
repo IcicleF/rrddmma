@@ -76,14 +76,16 @@ impl<'a> DctBuilder<'a> {
     /// Unwrap the builder and return the set attributes.
     pub(crate) fn unwrap(self) -> io::Result<DctInitAttr> {
         let pd = self.pd.expect("PD must be set").clone();
+        let cq = self.cq.expect("CQ must be set");
         let srq = Srq::new(
             &pd,
+            Some(cq),
             QpCaps::default().max_recv_wr,
             QpCaps::default().max_recv_sge,
         )?;
         Ok(DctInitAttr {
             pd,
-            cq: self.cq.expect("CQ must be set").clone(),
+            cq: cq.clone(),
             srq,
             port: self.port.expect("local port must be set"),
             gid_index: self.gid_index,
@@ -113,13 +115,12 @@ impl DctInitAttr {
             port: self.port.num(),
             access_flags: Permission::default().into(),
             min_rnr_timer: 12,
-            tclass: 0,
-            flow_label: 0,
             mtu: self.port.mtu() as _,
-            pkey_index: 0,
             gid_index: self.gid_index,
             hop_limit: 0xFF,
             inline_size: self.inline_size,
+
+            // SAFETY: POD type.
             ..unsafe { mem::zeroed() }
         }
     }

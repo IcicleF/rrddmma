@@ -21,7 +21,7 @@ use crate::utils::interop::from_c_ret;
 /// Wrapper for `*mut ibv_mr`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct IbvMr(NonNull<ibv_mr>);
+pub(crate) struct IbvMr(Option<NonNull<ibv_mr>>);
 
 impl IbvMr {
     /// Get the start address of the registered memory area.
@@ -113,7 +113,7 @@ impl Mr {
         // SAFETY: FFI.
         let mr = unsafe { ibv_reg_mr(pd.as_raw(), buf as _, len, perm.into()) };
         let mr = NonNull::new(mr).ok_or_else(IoError::last_os_error)?;
-        let mr = IbvMr(mr);
+        let mr = IbvMr::from(mr);
 
         Ok(Self {
             inner: Arc::new(MrInner { pd: pd.clone(), mr }),

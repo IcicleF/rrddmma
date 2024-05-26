@@ -11,7 +11,7 @@ use crate::utils::interop::from_c_ret;
 /// Wrapper for `*mut ibv_pd`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub(crate) struct IbvPd(NonNull<ibv_pd>);
+pub(crate) struct IbvPd(Option<NonNull<ibv_pd>>);
 
 impl IbvPd {
     /// Deallocate the PD.
@@ -58,7 +58,7 @@ impl Pd {
         // SAFETY: FFI
         let pd = unsafe { ibv_alloc_pd(ctx.as_raw()) };
         let pd = NonNull::new(pd).ok_or_else(IoError::last_os_error)?;
-        let pd = IbvPd(pd);
+        let pd = IbvPd::from(pd);
 
         Ok(Self {
             inner: Arc::new(PdInner {
@@ -79,5 +79,27 @@ impl Pd {
     #[inline]
     pub fn context(&self) -> &Context {
         &self.inner.ctx
+    }
+
+    /// Consume and leak the `Pd`, returning the underlying `ibv_pd` pointer.
+    /// The method receiver must be the only instance of the same protection domain, i.e.,
+    ///
+    /// - none of its clones may be alive
+    /// - no [`Mr`](crate::prelude::Mr)s, [`Qp`](crate::prelude::Qp)s, or [`Srq`](crate::prelude::Srq)s created from it may be alive.
+    ///
+    /// otherwise, this method fails.
+    pub fn leak(mut self) -> Result<*mut ibv_pd, Self> {
+        let mut inner = {
+            let inner = Arc::try_unwrap(self.inner);
+            match inner {
+                Ok(inner) => inner,
+                Err(inner) => {
+                    self.inner = inner;
+                    return Err(self);
+                }
+            }
+        };
+        let pd = inner.pd.0.take().unwrap();
+        Ok(pd.as_ptr())
     }
 }

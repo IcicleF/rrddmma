@@ -35,7 +35,7 @@ mod ty;
 /// Wrapper for `*mut ibv_qp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub(crate) struct IbvQp(NonNull<ibv_qp>);
+pub(crate) struct IbvQp(Option<NonNull<ibv_qp>>);
 
 impl IbvQp {
     /// Destroy the QP.
@@ -185,7 +185,7 @@ impl Qp {
 
         let qp = do_create_qp(pd, &init_attr);
         let qp = NonNull::new(qp).ok_or_else(IoError::last_os_error)?;
-        let qp = IbvQp(qp);
+        let qp = IbvQp::from(qp);
 
         let qp = Qp {
             inner: Arc::new(QpInner {
@@ -359,7 +359,7 @@ impl Qp {
             attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
             attr.max_rd_atomic = 16;
             attr.timeout = 14;
-            attr.retry_cnt = 6;
+            attr.retry_cnt = 7;
             attr.rnr_retry = 6;
 
             let attr_mask = ibv_exp_qp_attr_mask::IBV_EXP_QP_STATE
@@ -691,14 +691,14 @@ impl Qp {
     /// # Panics
     ///
     /// Panic if this QP is not a DC initiator.
-    pub fn set_dc_peer(&mut self, peer: &QpPeer) {
+    pub fn set_dc_peer(&mut self, peer: QpPeer) {
         #[cfg(mlnx4)]
         const EXPECTED_QP_TYPE: QpType = QpType::DcIni;
         #[cfg(mlnx5)]
         const EXPECTED_QP_TYPE: QpType = QpType::Driver;
 
         assert_eq!(self.qp_type(), EXPECTED_QP_TYPE, "QP is not a DC initiator");
-        self.peer = Some(peer.clone());
+        self.peer = Some(peer);
     }
 
     /// Create a new peer that is reachable from this QP.
@@ -707,8 +707,8 @@ impl Qp {
     /// # Panics
     ///
     /// Panic if this QP is not bound to a local port.
-    pub fn make_peer(&self, ep: &QpEndpoint) -> io::Result<QpPeer> {
-        QpPeer::new(self.pd(), self.local_port.as_ref().unwrap().1, *ep)
+    pub fn make_peer(&self, ep: QpEndpoint) -> io::Result<QpPeer> {
+        QpPeer::new(self.pd(), self.local_port.as_ref().unwrap().1, ep)
     }
 
     /// Reset the QP.

@@ -57,7 +57,7 @@ impl IbvDevice {
     }
 }
 
-impl_ibv_wrapper_traits!(ibv_device, IbvDevice);
+impl_ibv_wrapper_traits!(RAW, ibv_device, IbvDevice);
 
 /// Wrapper for `*mut *mut ibv_device`.
 #[repr(transparent)]
