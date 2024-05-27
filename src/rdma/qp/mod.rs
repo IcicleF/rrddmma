@@ -340,7 +340,7 @@ impl Qp {
             attr.ah_attr.grh.sgid_index = gid_idx;
             attr.ah_attr.grh.hop_limit = 0xFF;
             attr.ah_attr.grh.dgid = port.gids()[gid_idx as usize].gid.into();
-            attr.ah_attr.is_global = 1;
+            attr.ah_attr.is_global = 0;
             attr.ah_attr.dlid = port.lid();
             attr.ah_attr.port_num = port.num();
             attr.ah_attr.sl = 0;
@@ -359,7 +359,7 @@ impl Qp {
             attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
             attr.max_rd_atomic = 16;
             attr.timeout = 14;
-            attr.retry_cnt = 7;
+            attr.retry_cnt = 6;
             attr.rnr_retry = 6;
 
             let attr_mask = ibv_exp_qp_attr_mask::IBV_EXP_QP_STATE

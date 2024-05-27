@@ -273,7 +273,7 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
                 .bitfield_enum("verbs_context_mask")
                 .bitfield_enum("ibv_exp_device_cap_flags")
                 .bitfield_enum("ibv_exp_device_attr_comp_mask")
-                .bitfield_enum("ibv_exp_device_attr_comp_mask2")
+                .bitfield_enum("ibv_exp_device_attr_comp_mask_2")
                 .bitfield_enum("ibv_exp_qp_init_attr_comp_mask")
                 .bitfield_enum("ibv_exp_qp_attr_mask")
                 .bitfield_enum("ibv_exp_send_flags")

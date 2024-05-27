@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
             .send_cq(&cq)
             .recv_cq(&cq)
             .sq_sig_all(true)
-            .enable_feature(ExpFeature::ExtendedAtomics, 16)
+            .enable_feature(ExpFeature::ExtendedAtomics)
             .build(&pd)?;
         qp.bind_local_port(&ports[0], None)?;
         Ok(qp)

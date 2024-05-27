@@ -442,6 +442,30 @@ pub unsafe fn ibv_exp_create_srq(
     }
 }
 
+/// Query device experimental attributes.
+#[inline]
+pub unsafe fn ibv_exp_query_device(
+    context: *mut ibv_context,
+    attr: *mut ibv_exp_device_attr,
+) -> ::std::os::raw::c_int {
+    let vctx = verbs_get_exp_ctx_op!(context, lib_exp_query_device);
+    if vctx.is_null() {
+        ENOSYS
+    } else {
+        if ((*attr).comp_mask
+            & ibv_exp_device_attr_comp_mask::IBV_EXP_DEVICE_ATTR_COMP_MASK_2.0 as u32
+            != 0)
+        {
+            IBV_EXP_RET_EINVAL_ON_INVALID_COMP_MASK_compat!(
+                (*attr).comp_mask_2,
+                ibv_exp_device_attr_comp_mask_2::IBV_EXP_DEVICE_ATTR_RESERVED_2.0 as u64 - 1,
+                "ibv_exp_query_device"
+            );
+        }
+        (*vctx).lib_exp_query_device.unwrap()(context, attr)
+    }
+}
+
 /// Create a Dynamically-connected target.
 #[inline]
 pub unsafe fn ibv_exp_create_dct(

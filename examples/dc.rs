@@ -29,8 +29,10 @@ fn main() -> anyhow::Result<()> {
 
         // Send the message to the server.
         let mem = RegisteredMem::new_with_content(qp.pd(), "Hello, rrddmma!".as_bytes())?;
-        qp.send(&[mem.as_slice()], Some(&peer), None, 0, true, true)?;
-        qp.scq().poll_one_blocking()?;
+        for _ in 0..100000 {
+            qp.send(&[mem.as_slice()], Some(&peer), None, 0, true, true)?;
+            qp.scq().poll_one_blocking()?;
+        }
         Ok(())
     }
 
@@ -53,9 +55,13 @@ fn main() -> anyhow::Result<()> {
 
     // Receive a message from the client.
     let mem = RegisteredMem::new(dct.pd(), 4096)?;
-    dct.srq().recv(&[mem.as_slice()], 0)?;
-    let wc = dct.cq().poll_one_blocking()?;
-    println!("{}", String::from_utf8_lossy(&mem[..wc.ok()?]));
+    for i in 0..100000 {
+        dct.srq().recv(&[mem.as_slice()], 0)?;
+        let wc = dct.cq().poll_one_blocking()?;
+        if (i + 1) % 10000 == 0 {
+            println!("{}", String::from_utf8_lossy(&mem[..wc.ok()?]));
+        }
+    }
 
     cli.join().unwrap()?;
     Ok(())

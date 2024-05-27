@@ -1,5 +1,5 @@
 #[cfg(mlnx4)]
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::mem;
 
 use crate::bindings::*;
@@ -13,15 +13,6 @@ use super::{Qp, QpCreationError, QpType};
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ExpFeature {
     /// Enable extended atomic compare-and-swap & fetch-and-add.
-    ///
-    /// **NOTE:** Possibly buggy when using DC QPs.
-    ///
-    /// # Argument
-    ///
-    /// The argument that needs to be provided when setting this feature
-    /// is the maximum atomic argument size in bytes (e.g., 8).
-    /// The value should be a power of two.
-    /// Maximum is usually 32 bytes. Minimum is 8 bytes.
     ExtendedAtomics,
 }
 
@@ -138,7 +129,7 @@ pub struct QpBuilder<'a> {
 
     /// Enabled experimental features.
     #[cfg(mlnx4)]
-    pub(super) features: HashMap<ExpFeature, u32>,
+    pub(super) features: HashSet<ExpFeature>,
 }
 
 impl<'a> QpBuilder<'a> {
@@ -154,7 +145,7 @@ impl<'a> QpBuilder<'a> {
             sq_sig_all: None,
 
             #[cfg(mlnx4)]
-            features: HashMap::new(),
+            features: Default::default(),
         }
     }
 
@@ -190,11 +181,9 @@ impl<'a> QpBuilder<'a> {
     }
 
     /// Enable experimental features for the QP.
-    ///
-    /// Enabling the same feature multiple times will overwrite the previous value.
     #[cfg(mlnx4)]
-    pub fn enable_feature(mut self, feature: ExpFeature, value: u32) -> Self {
-        self.features.insert(feature, value);
+    pub fn enable_feature(mut self, feature: ExpFeature) -> Self {
+        self.features.insert(feature);
         self
     }
 
@@ -257,7 +246,7 @@ pub(super) struct QpInitAttr {
 
     /// Experimental feature flags.
     #[cfg(mlnx4)]
-    pub features: HashMap<ExpFeature, u32>,
+    pub features: HashSet<ExpFeature>,
 }
 
 impl QpInitAttr {
@@ -301,12 +290,21 @@ impl QpInitAttr {
         };
 
         // Digest experimental features.
-        for (&feature, &value) in &self.features {
+        for feature in &self.features {
             match feature {
                 ExpFeature::ExtendedAtomics => {
+                    // SAFETY: POD type.
+                    let mut dev_attr = unsafe { mem::zeroed::<ibv_exp_device_attr>() };
+                    dev_attr.comp_mask =
+                        (ibv_exp_device_attr_comp_mask::IBV_EXP_DEVICE_ATTR_EXT_ATOMIC_ARGS
+                            | ibv_exp_device_attr_comp_mask::IBV_EXP_DEVICE_ATTR_EXP_CAP_FLAGS)
+                            .0 as _;
+                    // SAFETY: FFI.
+                    unsafe { ibv_exp_query_device(pd.context().as_raw(), &mut dev_attr) };
+
                     attr.comp_mask |=
                         ibv_exp_qp_init_attr_comp_mask::IBV_EXP_QP_INIT_ATTR_ATOMICS_ARG.0;
-                    attr.max_atomic_arg = value.max(mem::size_of::<u64>() as _);
+                    attr.max_atomic_arg = 1 << dev_attr.ext_atom.log_max_atomic_inline;
                 }
             }
         }

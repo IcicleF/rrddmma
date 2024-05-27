@@ -1,6 +1,6 @@
 use std::{io, mem};
 
-use crate::bindings::ibv_exp_dct_init_attr;
+use crate::bindings::*;
 use crate::prelude::QpCaps;
 use crate::rdma::{context::Context, cq::Cq, mr::Permission, nic::*, pd::Pd, srq::Srq};
 
