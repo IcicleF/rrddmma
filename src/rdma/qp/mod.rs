@@ -685,6 +685,11 @@ impl Qp {
         Ok(())
     }
 
+    /// Return `true` if a peer has been set for this QP.
+    pub fn has_peer(&self) -> bool {
+        self.peer.is_some()
+    }
+
     /// Set the peer for this QP.
     /// Send-type verbs will be sent to this peer until the next call to this method.
     ///

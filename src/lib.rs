@@ -14,6 +14,8 @@
 #![doc = include_str!("../examples/local_rc_sendrecv.rs")]
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 #[cfg(not(target_os = "linux"))]
 compile_error!("`rrddmma` currently only supports Linux");
 

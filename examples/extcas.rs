@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
         thread,
     };
 
-    const LEN: usize = 16;
+    const LEN: usize = 8;
 
     fn make_qp(dev: &str) -> anyhow::Result<Qp> {
         let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;
@@ -39,9 +39,9 @@ fn main() -> anyhow::Result<()> {
         fn ptr_to(val: &[u64; 2]) -> NonNull<u64> {
             NonNull::new(val.as_ptr() as *mut u64).unwrap()
         }
-        let cmp = [0x0123456789abcdefu64, 0x1145141919810abcu64];
-        let cmp_mask = [0xffffffffffffffffu64, 0xffffffffffffffffu64];
-        let swap = [0xdeadbeefdeadbeefu64, 0x8badf00d8badf00du64];
+        let cmp = [0x0u64, 0x0u64];
+        let cmp_mask = [0x0u64, 0x0u64];
+        let swap = [0xdeadbeef01234567u64, 0x8badf00d8badf00du64];
         let swap_mask = [0xffffffffffffffffu64, 0xffffffffffffffffu64];
 
         let mut mem = RegisteredMem::new(qp.pd(), 4096)?;
@@ -56,15 +56,21 @@ fn main() -> anyhow::Result<()> {
             qp.ext_compare_swap::<LEN>(&mem.slice(0, LEN).unwrap(), &remote, &params, 0, true)?;
         }
         qp.scq().poll_one_blocking_consumed();
-        unsafe {
-            println!(
-                "client: {:#x} {:#x}",
-                ptr::read::<u64>(mem.as_ptr() as _).swap_bytes(),
-                ptr::read::<u64>(mem.as_ptr().add(8) as _).swap_bytes()
-            )
-        };
+        if LEN > 8 {
+            unsafe {
+                println!(
+                    "client: {:#x} {:#x}",
+                    ptr::read::<u64>(mem.as_ptr() as _).swap_bytes(),
+                    ptr::read::<u64>(mem.as_ptr().add(8) as _).swap_bytes()
+                )
+            };
+        } else {
+            unsafe { println!("client: {:#x}", ptr::read::<u64>(mem.as_ptr() as _)) };
+        }
         Ok(())
     }
+
+    println!("LEN = {:?}", LEN);
 
     let mut qp = make_qp("mlx5_0")?;
     let mut mem = RegisteredMem::new(qp.pd(), 4096)?;

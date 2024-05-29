@@ -225,13 +225,43 @@ impl Cq {
     ///
     /// It is the caller's responsibility to check the status codes of the
     /// returned work completion entries.
-    #[inline]
+    ///
+    /// When feature `warned_spin` is set, this function will print warning
+    /// messages every second to the standard error.
     pub fn poll_blocking(&self, num: u32) -> io::Result<Vec<Wc>> {
-        let mut wc = <Vec<Wc>>::with_capacity(num as usize);
-        while wc.len() < (num as usize) {
-            let extra = self.poll_some(num - wc.len() as u32)?;
-            wc.extend(extra);
+        #[cfg(not(feature = "warned_spin"))]
+        fn do_poll(cq: &Cq, num: u32, wc: &mut Vec<Wc>) -> io::Result<()> {
+            while wc.len() < (num as usize) {
+                let extra = cq.poll_some(num - wc.len() as u32)?;
+                wc.extend(extra);
+            }
+            Ok(())
         }
+
+        #[cfg(feature = "warned_spin")]
+        fn do_poll(cq: &Cq, num: u32, wc: &mut Vec<Wc>) -> io::Result<()> {
+            use quanta::Instant;
+
+            let mut last_warn = Instant::now();
+            while wc.len() < (num as usize) {
+                let extra = cq.poll_some(num - wc.len() as u32)?;
+                wc.extend(extra);
+
+                if last_warn.elapsed().as_secs() >= 1 {
+                    eprintln!("warning: spinning on CQ poll ...");
+                    let bt = std::backtrace::Backtrace::capture();
+                    if bt.status() == std::backtrace::BacktraceStatus::Captured {
+                        eprintln!("backtrace: {:#?}", bt);
+                    }
+
+                    last_warn = Instant::now();
+                }
+            }
+            Ok(())
+        }
+
+        let mut wc = <Vec<Wc>>::with_capacity(num as usize);
+        do_poll(self, num, &mut wc)?;
         Ok(wc)
     }
 
@@ -257,9 +287,33 @@ impl Cq {
     ///
     /// Panic if the work completion status is not success.
     pub fn poll_one_blocking_consumed(&self) {
+        #[cfg(not(feature = "warned_spin"))]
+        fn do_poll(cq: *mut ibv_cq, wc: &mut MaybeUninit<Wc>) {
+            while unsafe { ibv_poll_cq(cq, 1, wc as *mut _ as _) } == 0 {}
+        }
+
+        #[cfg(feature = "warned_spin")]
+        fn do_poll(cq: *mut ibv_cq, wc: &mut MaybeUninit<Wc>) {
+            use quanta::Instant;
+
+            let mut last_warn = Instant::now();
+            while unsafe { ibv_poll_cq(cq, 1, wc as *mut _ as _) } == 0 {
+                if last_warn.elapsed().as_secs() >= 1 {
+                    eprintln!("warning: spinning on CQ poll ...");
+                    let bt = std::backtrace::Backtrace::capture();
+                    if bt.status() == std::backtrace::BacktraceStatus::Captured {
+                        eprintln!("backtrace: {:#?}", bt);
+                    }
+
+                    last_warn = Instant::now();
+                }
+            }
+        }
+
         // SAFETY: `Wc` is transparent over `ibv_wc`.
         let mut wc = <MaybeUninit<Wc>>::uninit();
-        while unsafe { ibv_poll_cq(self.as_raw(), 1, &mut wc as *mut _ as _) } == 0 {}
+        do_poll(self.as_raw(), &mut wc);
+
         // SAFETY: `wc` is initialized by `ibv_poll_cq`.
         assert_eq!(unsafe { wc.assume_init() }.status(), WcStatus::Success);
     }
@@ -269,16 +323,46 @@ impl Cq {
     /// It is the caller's responsibility to check the status codes of the
     /// returned work completion entries.
     ///
+    /// When feature `warned_spin` is set, this function will print warning
+    /// messages every second to the standard error.
+    ///
     /// **NOTE:** It is possible that the number of polled work completions is
     /// less than `wc.len()` or even zero. The validity of work completions
     /// beyond the number of polled work completions is not guaranteed.
     pub fn poll_blocking_into(&self, wc: &mut [Wc]) -> io::Result<()> {
-        let num = wc.len();
-        let mut polled = 0;
-        while polled < num {
-            let n = self.poll_into(&mut wc[polled..])?;
-            polled += n as usize;
+        #[cfg(not(feature = "warned_spin"))]
+        fn do_poll(cq: &Cq, wc: &mut [Wc]) -> io::Result<()> {
+            let mut polled = 0;
+            while polled < wc.len() {
+                let n = cq.poll_into(&mut wc[polled..])?;
+                polled += n as usize;
+            }
+            Ok(())
         }
+
+        #[cfg(feature = "warned_spin")]
+        fn do_poll(cq: &Cq, wc: &mut [Wc]) -> io::Result<()> {
+            use quanta::Instant;
+
+            let mut polled = 0;
+            let mut last_warn = Instant::now();
+            while polled < wc.len() {
+                let n = cq.poll_into(&mut wc[polled..])?;
+                polled += n as usize;
+
+                if last_warn.elapsed().as_secs() >= 1 {
+                    eprintln!("warning: spinning on CQ poll ...");
+                    let bt = std::backtrace::Backtrace::capture();
+                    if bt.status() == std::backtrace::BacktraceStatus::Captured {
+                        eprintln!("backtrace: {:#?}", bt);
+                    }
+
+                    last_warn = Instant::now();
+                }
+            }
+            Ok(())
+        }
+        do_poll(self, wc)?;
         Ok(())
     }
 
@@ -287,11 +371,37 @@ impl Cq {
     /// It is the caller's responsibility to check the status codes of the
     /// returned work completion entry.
     pub fn poll_one_blocking_into(&self, wc: &mut Wc) -> io::Result<()> {
-        let mut polled = 0;
-        while polled == 0 {
-            polled = self.poll_one_into(wc)?;
+        #[cfg(not(feature = "warned_spin"))]
+        fn do_poll(cq: &Cq, wc: &mut Wc) -> io::Result<()> {
+            let mut polled = 0;
+            while polled == 0 {
+                polled = cq.poll_one_into(wc)?;
+            }
+            Ok(())
         }
-        Ok(())
+
+        #[cfg(feature = "warned_spin")]
+        fn do_poll(cq: &Cq, wc: &mut Wc) -> io::Result<()> {
+            use quanta::Instant;
+
+            let mut polled = 0;
+            let mut last_warn = Instant::now();
+            while polled == 0 {
+                polled = cq.poll_one_into(wc)?;
+                if last_warn.elapsed().as_secs() >= 1 {
+                    eprintln!("warning: spinning on CQ poll ...");
+                    let bt = std::backtrace::Backtrace::capture();
+                    if bt.status() == std::backtrace::BacktraceStatus::Captured {
+                        eprintln!("backtrace: {:#?}", bt);
+                    }
+
+                    last_warn = Instant::now();
+                }
+            }
+            Ok(())
+        }
+
+        do_poll(self, wc)
     }
 }
 
