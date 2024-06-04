@@ -1,7 +1,7 @@
-use std::fmt;
 use std::io::{self, Error as IoError};
 use std::ptr::NonNull;
 use std::sync::Arc;
+use std::{fmt, mem};
 
 use crate::bindings::*;
 #[cfg(mlnx4)]
@@ -13,7 +13,7 @@ use crate::utils::interop::from_c_ret;
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct QpEndpoint {
     /// Endpoint GID.
-    pub gid: Gid,
+    pub gid: Option<Gid>,
 
     /// Port LID.
     pub lid: Lid,
@@ -30,14 +30,22 @@ impl QpEndpoint {
     /// Return `None` if the Qp is not yet bound to a local port.
     pub fn of_qp(qp: &Qp) -> Option<Self> {
         let (port, gid_idx) = qp.port()?;
-        let gid = port.gids()[*gid_idx as usize];
-
-        Some(Self {
-            gid: gid.gid,
-            port_num: port.num(),
-            lid: port.lid(),
-            num: qp.qp_num(),
-        })
+        if qp.use_global_routing() {
+            let gid = port.gids()[*gid_idx as usize];
+            Some(Self {
+                gid: Some(gid.gid),
+                port_num: port.num(),
+                lid: port.lid(),
+                num: qp.qp_num(),
+            })
+        } else {
+            Some(Self {
+                gid: None,
+                port_num: port.num(),
+                lid: port.lid(),
+                num: qp.qp_num(),
+            })
+        }
     }
 
     /// Create an endpoint representing a DCT.
@@ -46,11 +54,21 @@ impl QpEndpoint {
         let init_attr = dct.init_attr();
         let gid = init_attr.port.gids()[init_attr.gid_index as usize];
         Self {
-            gid: gid.gid,
+            gid: Some(gid.gid),
             port_num: init_attr.port.num(),
             lid: init_attr.port.lid(),
             num: dct.dct_num(),
         }
+    }
+
+    /// Return `true` if this endpoint contains global routing information.
+    pub fn is_global(&self) -> bool {
+        self.gid.is_some()
+    }
+
+    /// Convert this endpoint to a local routing one by removing its GID information.
+    pub fn as_local(self) -> Self {
+        Self { gid: None, ..self }
     }
 }
 
@@ -112,21 +130,30 @@ impl fmt::Debug for QpPeer {
 impl QpPeer {
     /// Create a new peer that represents a regular QP or a DCT.
     pub(crate) fn new(pd: &Pd, sgid_index: GidIndex, ep: QpEndpoint) -> io::Result<Self> {
+        // SAFETY: POD type.
         let mut ah_attr = ibv_ah_attr {
-            grh: ibv_global_route {
-                dgid: ep.gid.into(),
-                flow_label: 0,
-                sgid_index,
-                hop_limit: 0xFF,
-                traffic_class: 0,
-            },
-            is_global: 1,
             dlid: ep.lid,
             sl: 0,
             src_path_bits: 0,
             static_rate: 0,
             port_num: ep.port_num,
+            ..unsafe { mem::zeroed() }
         };
+
+        if ep.is_global() {
+            ah_attr = ibv_ah_attr {
+                grh: ibv_global_route {
+                    // GID availability checked by `is_global`.
+                    dgid: ep.gid.unwrap().into(),
+                    flow_label: 0,
+                    sgid_index,
+                    hop_limit: 0xFF,
+                    traffic_class: 0,
+                },
+                is_global: 1,
+                ..ah_attr
+            };
+        }
 
         // SAFETY: FFI.
         let ah = unsafe { ibv_create_ah(pd.as_raw(), &mut ah_attr) };

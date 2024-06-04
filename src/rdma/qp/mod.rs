@@ -55,7 +55,7 @@ impl IbvQp {
     /// # Panics
     ///
     /// Panic if the QP contains an unknown type, which shouldn't happen.
-    #[inline]
+
     pub fn qp_type(&self) -> QpType {
         // SAFETY: `self` points to a valid `ibv_qp` instance.
         let ty = unsafe { (*self.as_ptr()).qp_type };
@@ -63,14 +63,14 @@ impl IbvQp {
     }
 
     /// Get the QP number.
-    #[inline]
+
     pub fn qp_num(&self) -> u32 {
         // SAFETY: `self` points to a valid `ibv_qp` instance.
         unsafe { (*self.as_ptr()).qp_num }
     }
 
     /// Get the QP state.
-    #[inline]
+
     pub fn qp_state(&self) -> QpState {
         // SAFETY: `self` points to a valid `ibv_qp` instance.
         let state = unsafe { (*self.as_ptr()).state };
@@ -246,7 +246,6 @@ impl Qp {
         if self.qp_type() == QpType::Rc {
             let (port, gid_idx) = self.local_port.as_ref().unwrap();
             let peer = self.peer.as_ref().unwrap();
-            let gid_idx = *gid_idx;
             let ep = peer.endpoint();
 
             attr.path_mtu = port.mtu() as _;
@@ -255,16 +254,20 @@ impl Qp {
             attr.max_dest_rd_atomic = 16;
             attr.min_rnr_timer = 12;
 
-            attr.ah_attr.grh.dgid = ep.gid.into();
-            attr.ah_attr.grh.flow_label = 0;
-            attr.ah_attr.grh.sgid_index = gid_idx;
-            attr.ah_attr.grh.hop_limit = 0xFF;
-            attr.ah_attr.grh.traffic_class = 0;
             attr.ah_attr.dlid = ep.lid;
             attr.ah_attr.sl = 0;
             attr.ah_attr.src_path_bits = 0;
             attr.ah_attr.port_num = port.num();
-            attr.ah_attr.is_global = 1;
+
+            if self.use_global_routing() {
+                // Destination GID availability is ensured by `bind_peer`.
+                attr.ah_attr.grh.dgid = ep.gid.unwrap().into();
+                attr.ah_attr.grh.flow_label = 0;
+                attr.ah_attr.grh.sgid_index = *gid_idx;
+                attr.ah_attr.grh.hop_limit = 0xFF;
+                attr.ah_attr.grh.traffic_class = 0;
+                attr.ah_attr.is_global = 1;
+            }
 
             attr_mask |= ibv_qp_attr_mask::IBV_QP_AV
                 | ibv_qp_attr_mask::IBV_QP_PATH_MTU
@@ -522,7 +525,6 @@ impl Qp {
     }
 
     /// Get the underlying `ibv_qp` pointer.
-    #[inline]
     pub fn as_raw(&self) -> *mut ibv_qp {
         self.qp.as_ptr()
     }
@@ -538,19 +540,16 @@ impl Qp {
     }
 
     /// Get the type of the queue pair.
-    #[inline]
     pub fn qp_type(&self) -> QpType {
         self.qp.qp_type()
     }
 
     /// Get the queue pair number.
-    #[inline]
     pub(crate) fn qp_num(&self) -> u32 {
         self.qp.qp_num()
     }
 
     /// Get the current state of the queue pair.
-    #[inline]
     pub fn state(&self) -> QpState {
         self.qp.qp_state()
     }
@@ -561,32 +560,32 @@ impl Qp {
     }
 
     /// Get the information of the local port that this QP is bound to.
-    #[inline]
     pub fn port(&self) -> Option<&(Port, GidIndex)> {
         self.local_port.as_ref()
     }
 
     /// Get the information of the remote peer that this QP is connected to.
-    #[inline]
     pub fn peer(&self) -> Option<&QpPeer> {
         self.peer.as_ref()
     }
 
     /// Get the endpoint information of this QP.
     /// Return `None` if the QP is not yet bound to a local port.
-    #[inline]
     pub fn endpoint(&self) -> Option<QpEndpoint> {
         QpEndpoint::of_qp(self)
     }
 
+    /// Return `true` if the QP uses global routing.
+    pub fn use_global_routing(&self) -> bool {
+        self.inner.init_attr.global_routing
+    }
+
     /// Get the associated send completion queue.
-    #[inline]
     pub fn scq(&self) -> &Cq {
         &self.inner.init_attr.send_cq
     }
 
     /// Get the associated receive completion queue.
-    #[inline]
     pub fn rcq(&self) -> &Cq {
         &self.inner.init_attr.recv_cq
     }
@@ -617,20 +616,33 @@ impl Qp {
             ));
         }
 
-        let gid_index = gid_index.unwrap_or(port.recommended_gid().1);
+        let gid_index = if self.use_global_routing() {
+            gid_index.unwrap_or(port.recommended_gid().1)
+        } else {
+            // Error if the port only works in RoCE mode (i.e., GRH is necessary).
+            let index = port.gids().iter().position(|gid| !gid.ty.is_roce());
+            index.ok_or_else(|| {
+                IoError::new(
+                    IoErrorKind::InvalidInput,
+                    "port only supports RoCE, but global routing is disabled",
+                )
+            })? as _
+        };
         self.local_port = Some((port.clone(), gid_index));
 
-        // Bring up QP if UD.
-        if self.qp_type() == QpType::Ud {
-            self.modify_reset2init()?;
-            self.modify_init2rtr()?;
-            self.modify_rtr2rts()?;
-        }
+        // Bring up QP to INIT (for RC) or RTS (for UD/DC) state.
+        match self.qp_type() {
+            QpType::Ud => {
+                self.modify_reset2init()?;
+                self.modify_init2rtr()?;
+                self.modify_rtr2rts()?;
+            }
+            QpType::Rc => self.modify_reset2init()?,
 
-        // Bring up QP if Mlnx4 DCI.
-        #[cfg(mlnx4)]
-        if self.qp_type() == QpType::DcIni {
-            self.modify_dcini_reset2rts()?;
+            #[cfg(mlnx4)]
+            QpType::DcIni => self.modify_dcini_reset2rts()?,
+
+            _ => {}
         }
 
         Ok(())
@@ -670,15 +682,23 @@ impl Qp {
             );
         }
 
-        self.peer = Some(QpPeer::new(
-            self.pd(),
-            self.local_port.as_ref().unwrap().1,
-            ep,
-        )?);
+        // Ensure global routing consistency.
+        if self.use_global_routing() && ep.gid.is_none() {
+            return Err(IoError::new(
+                IoErrorKind::InvalidInput,
+                "global routing is enabled for me, but not for peer",
+            ));
+        }
+
+        let sgid_index = if self.use_global_routing() {
+            self.local_port.as_ref().unwrap().1
+        } else {
+            0
+        };
+        self.peer = Some(QpPeer::new(self.pd(), sgid_index, ep)?);
 
         // Bring up QP.
         if self.qp_type() == QpType::Rc {
-            self.modify_reset2init()?;
             self.modify_init2rtr()?;
             self.modify_rtr2rts()?;
         }
@@ -713,7 +733,12 @@ impl Qp {
     ///
     /// Panic if this QP is not bound to a local port.
     pub fn make_peer(&self, ep: QpEndpoint) -> io::Result<QpPeer> {
-        QpPeer::new(self.pd(), self.local_port.as_ref().unwrap().1, ep)
+        let sgid_index = if self.use_global_routing() {
+            self.local_port.as_ref().unwrap().1
+        } else {
+            0
+        };
+        QpPeer::new(self.pd(), sgid_index, ep)
     }
 
     /// Reset the QP.
@@ -856,8 +881,8 @@ impl Qp {
             },
             num_sge: local.len() as i32,
             opcode: imm
-                .map(|_| ibv_wr_opcode::IBV_WR_SEND_WITH_IMM)
-                .unwrap_or(ibv_wr_opcode::IBV_WR_SEND),
+                .map(|_| ibv_wr_opcode::IBV_WR_RDMA_WRITE_WITH_IMM)
+                .unwrap_or(ibv_wr_opcode::IBV_WR_RDMA_WRITE),
             send_flags: if signal {
                 ibv_send_flags::IBV_SEND_SIGNALED.0
             } else {
@@ -886,7 +911,6 @@ impl Qp {
     /// | QP Type | RC | UC | UD | DC |
     /// |---------|----|----|----|----|
     /// | OK?     | Y  | N  | N  | N  |
-    #[inline]
     pub fn compare_swap(
         &self,
         local: &MrSlice,
@@ -939,7 +963,6 @@ impl Qp {
     /// | QP Type | RC | UC | UD | DC |
     /// |---------|----|----|----|----|
     /// | OK?     | Y  | N  | N  | N  |
-    #[inline]
     pub fn fetch_add(
         &self,
         local: &MrSlice,
@@ -1155,7 +1178,6 @@ impl Qp {
     /// - all work request entries in the linked list
     /// - length of the work request list
     /// - scatter/gather lists and their lengths
-    #[inline(always)]
     pub unsafe fn post_raw_recv(&self, wr: &ibv_recv_wr) -> io::Result<()> {
         let ret = {
             let mut bad_wr = ptr::null_mut();
@@ -1172,7 +1194,6 @@ impl Qp {
     /// - all work request entries in the linked list
     /// - length of the work request list
     /// - scatter/gather lists and their lengths
-    #[inline(always)]
     pub unsafe fn post_raw_send(&self, wr: &ibv_send_wr) -> io::Result<()> {
         let ret = {
             let mut bad_wr = ptr::null_mut();
@@ -1182,7 +1203,6 @@ impl Qp {
     }
 }
 
-#[inline]
 pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
     slices
         .iter()
@@ -1190,7 +1210,6 @@ pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
         .collect()
 }
 
-#[inline]
 fn check_atomic_mem(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
     if cfg!(debug_assertions) {
         if local.len() != 8 || remote.len != 8 {
@@ -1210,7 +1229,6 @@ fn check_atomic_mem(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
 }
 
 #[cfg(mlnx4)]
-#[inline]
 fn check_ext_atomic_mem<const N: usize>(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
     if !matches!(N, 8 | 16 | 32) {
         return Err(IoError::new(

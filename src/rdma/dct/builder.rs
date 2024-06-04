@@ -96,11 +96,22 @@ impl<'a> DctBuilder<'a> {
 
 /// Initialization attributes of a DCT endpoint.
 pub(crate) struct DctInitAttr {
+    /// Protection domain of this DCT.
     pub pd: Pd,
+
+    /// Receive completion queue for this DCT.
     pub cq: Cq,
+
+    /// Receive SRQ for this DCT.
     pub srq: Srq,
+
+    /// Local port that this DCT is bound to.
     pub port: Port,
+
+    /// GID index to use.
     pub gid_index: u8,
+
+    /// The maximum message size (in bytes) that can be inline received by the DCT.
     pub inline_size: u32,
 }
 

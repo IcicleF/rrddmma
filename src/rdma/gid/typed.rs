@@ -1,6 +1,6 @@
+use std::io::Error as IoError;
 #[cfg(mlnx5)]
 use std::io::{self, ErrorKind as IoErrorKind};
-use std::io::Error as IoError;
 use std::mem;
 use std::net::Ipv6Addr;
 
@@ -23,6 +23,16 @@ pub enum GidType {
 
     /// Infiniband.
     Infiniband,
+}
+
+impl GidType {
+    pub fn is_roce(self) -> bool {
+        matches!(self, GidType::RoceV1 | GidType::RoceV2)
+    }
+
+    pub fn is_infiniband(self) -> bool {
+        matches!(self, GidType::Infiniband)
+    }
 }
 
 /// GID query result error type.

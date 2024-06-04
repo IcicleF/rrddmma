@@ -127,6 +127,9 @@ pub struct QpBuilder<'a> {
     /// Whether to signal for all send work requests.
     pub(super) sq_sig_all: Option<bool>,
 
+    /// Whether to use global routing. Default is `true`.
+    pub(super) global_routing: bool,
+
     /// Enabled experimental features.
     #[cfg(mlnx4)]
     pub(super) features: HashSet<ExpFeature>,
@@ -138,11 +141,11 @@ impl<'a> QpBuilder<'a> {
         Self {
             send_cq: None,
             recv_cq: None,
-
             // SAFETY: POD type.
             caps: unsafe { mem::zeroed() },
             qp_type: None,
             sq_sig_all: None,
+            global_routing: true,
 
             #[cfg(mlnx4)]
             features: Default::default(),
@@ -162,7 +165,7 @@ impl<'a> QpBuilder<'a> {
     }
 
     /// Set the capabilities of this QP.
-    /// If not set, the QP will be unable to send or receive any work request.
+    /// If not set, the QP will be unable to send or receive any work request by default.
     pub fn caps(mut self, caps: QpCaps) -> Self {
         self.caps = caps;
         self
@@ -177,6 +180,18 @@ impl<'a> QpBuilder<'a> {
     /// Set whether to signal for all send work requests.
     pub fn sq_sig_all(mut self, sq_sig_all: bool) -> Self {
         self.sq_sig_all = Some(sq_sig_all);
+        self
+    }
+
+    /// Set whether to use global routing.
+    /// If not set, the QP will use global routing by default.
+    ///
+    /// Global routing is used to enable routing between different Infiniband subnets,
+    /// and to enable routing within subnets in RoCE networks. As such, it is mandatory
+    /// to set this attribute to `true` in RoCE networks, and if you don't do so, the QP
+    /// will err when you bind a local port to it.
+    pub fn global_routing(mut self, global_routing: bool) -> Self {
+        self.global_routing = global_routing;
         self
     }
 
@@ -214,6 +229,7 @@ impl<'a> QpBuilder<'a> {
             caps: self.caps,
             qp_type: self.qp_type.expect("QP type must be set"),
             sq_sig_all: self.sq_sig_all.expect("sq_sig_all must be explicitly set"),
+            global_routing: self.global_routing,
 
             #[cfg(mlnx4)]
             features: self.features,
@@ -243,6 +259,9 @@ pub(super) struct QpInitAttr {
 
     /// Whether to signal for all send work requests.
     pub sq_sig_all: bool,
+
+    /// Whether to use global routing.
+    pub global_routing: bool,
 
     /// Experimental feature flags.
     #[cfg(mlnx4)]

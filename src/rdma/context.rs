@@ -16,7 +16,6 @@ pub(crate) struct IbvContext(Option<NonNull<ibv_context>>);
 
 impl IbvContext {
     /// Get the underlying [`IbvDevice`] pointer.
-    #[inline]
     pub fn dev(&self) -> IbvDevice {
         // SAFETY: the pointed-to `ibv_context` instance is valid.
         unsafe { IbvDevice::from(NonNull::new_unchecked(self.as_ref().device)) }

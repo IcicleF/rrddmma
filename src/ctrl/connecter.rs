@@ -132,7 +132,12 @@ impl Connecter {
             qp.bind_peer(ep)?;
             Ok(None)
         } else {
-            QpPeer::new(qp.pd(), qp.port().unwrap().1, ep).map(Some)
+            let sgid_index = if qp.use_global_routing() {
+                qp.port().unwrap().1
+            } else {
+                0
+            };
+            QpPeer::new(qp.pd(), sgid_index, ep).map(Some)
         }
     }
 
