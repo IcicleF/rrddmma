@@ -913,8 +913,8 @@ impl Qp {
     /// | OK?     | Y  | N  | N  | N  |
     pub fn compare_swap(
         &self,
-        local: &MrSlice,
-        remote: &MrRemote,
+        local: MrSlice,
+        remote: MrRemote,
         current: u64,
         new: u64,
         wr_id: WrId,
@@ -965,8 +965,8 @@ impl Qp {
     /// | OK?     | Y  | N  | N  | N  |
     pub fn fetch_add(
         &self,
-        local: &MrSlice,
-        remote: &MrRemote,
+        local: MrSlice,
+        remote: MrRemote,
         add: u64,
         wr_id: WrId,
         signal: bool,
@@ -1029,9 +1029,9 @@ impl Qp {
     #[cfg(mlnx4)]
     pub unsafe fn ext_compare_swap<const N: usize>(
         &self,
-        local: &MrSlice,
-        remote: &MrRemote,
-        params: &ExtCompareSwapParams,
+        local: MrSlice,
+        remote: MrRemote,
+        params: ExtCompareSwapParams,
         wr_id: WrId,
         signal: bool,
     ) -> io::Result<()> {
@@ -1114,8 +1114,8 @@ impl Qp {
     #[cfg(mlnx4)]
     pub unsafe fn ext_fetch_add<const N: usize>(
         &self,
-        local: &MrSlice,
-        remote: &MrRemote,
+        local: MrSlice,
+        remote: MrRemote,
         add: NonNull<u64>,
         mask: NonNull<u64>,
         wr_id: WrId,
@@ -1210,7 +1210,7 @@ pub(crate) fn build_sgl(slices: &[MrSlice]) -> Vec<ibv_sge> {
         .collect()
 }
 
-fn check_atomic_mem(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
+fn check_atomic_mem(local: MrSlice, remote: MrRemote) -> io::Result<()> {
     if cfg!(debug_assertions) {
         if local.len() != 8 || remote.len != 8 {
             return Err(IoError::new(
@@ -1229,7 +1229,7 @@ fn check_atomic_mem(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
 }
 
 #[cfg(mlnx4)]
-fn check_ext_atomic_mem<const N: usize>(local: &MrSlice, remote: &MrRemote) -> io::Result<()> {
+fn check_ext_atomic_mem<const N: usize>(local: MrSlice, remote: MrRemote) -> io::Result<()> {
     if !matches!(N, 8 | 16 | 32) {
         return Err(IoError::new(
             IoErrorKind::InvalidInput,

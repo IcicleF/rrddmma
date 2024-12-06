@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
                 compare_mask: ptr_to(&cmp_mask),
                 swap_mask: ptr_to(&swap_mask),
             };
-            qp.ext_compare_swap::<LEN>(&mem.slice(0, LEN).unwrap(), &remote, &params, 0, true)?;
+            qp.ext_compare_swap::<LEN>(mem.slice(0, LEN).unwrap(), remote, params, 0, true)?;
         }
         qp.scq().poll_one_blocking_consumed();
         if LEN > 8 {

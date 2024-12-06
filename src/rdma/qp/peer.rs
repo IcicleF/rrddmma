@@ -61,6 +61,16 @@ impl QpEndpoint {
         }
     }
 
+    /// Create a new endpoint with user-designated routing information.
+    pub fn new(gid: Option<Gid>, lid: Lid, port_num: PortNum, num: Qpn) -> Self {
+        Self {
+            gid,
+            lid,
+            port_num,
+            num,
+        }
+    }
+
     /// Return `true` if this endpoint contains global routing information.
     pub fn is_global(&self) -> bool {
         self.gid.is_some()

@@ -1,6 +1,6 @@
 [package]
 name = "rrddmma"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 
 authors = ["Jian Gao <i@icyf.me>"]
@@ -19,7 +19,7 @@ serde_json = "1.0"
 toml = "0.8"
 log = "0.4"
 regex = "1.10"
-thiserror = "1.0"
+thiserror = "2.0"
 libc = "0.2"
 quanta = "0.12"
 
@@ -30,7 +30,14 @@ quanta = "0.12"
 
 [build-dependencies]
 pkg-config = "0.3"
-bindgen = "0.69"
+bindgen = "0.70"
 
 [features]
 warned_spin = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(mlnx4)',
+    'cfg(mlnx5)',
+    'cfg(manual_mlx5)',
+] }

@@ -46,8 +46,8 @@ fn main() -> anyhow::Result<()> {
         unsafe {
             ptr::write_bytes(mem.as_mut_ptr(), 0, LEN);
             qp.ext_fetch_add::<LEN>(
-                &mem.slice(0, LEN).unwrap(),
-                &remote,
+                mem.slice(0, LEN).unwrap(),
+                remote,
                 ptr_to(&add),
                 ptr_to(&mask),
                 0,

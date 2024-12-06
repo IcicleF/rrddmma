@@ -12,9 +12,11 @@ pub enum MlnxVersion {
 }
 
 /// Contains the current MLNX_OFED version detected by rrddmma.
+/// Note that this value is not always the same as the document -- it depends on your deployment environment.
 #[cfg(mlnx5)]
 pub const MLNX_VERSION: MlnxVersion = MlnxVersion::Mlnx5;
 
 /// Contains the current MLNX_OFED version detected by rrddmma.
+/// Note that this value is not always the same as the document -- it depends on your deployment environment.
 #[cfg(mlnx4)]
 pub const MLNX_VERSION: MlnxVersion = MlnxVersion::Mlnx4;

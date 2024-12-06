@@ -6,7 +6,7 @@ fn main() {
 #[cfg(mlnx4)]
 fn main() -> anyhow::Result<()> {
     use rrddmma::{prelude::*, wrap::RegisteredMem};
-    use std::thread;
+    use std::{thread, time::Duration};
 
     fn client(ep: QpEndpoint) -> anyhow::Result<()> {
         fn make_dci(dev: &str) -> anyhow::Result<Qp> {
@@ -55,14 +55,21 @@ fn main() -> anyhow::Result<()> {
 
     // Receive a message from the client.
     let mem = RegisteredMem::new(dct.pd(), 4096)?;
+    let mut total_recv_time = Duration::ZERO;
     for i in 0..100000 {
-        dct.srq().recv(&[mem.as_slice()], 0)?;
+        total_recv_time += {
+            let start = std::time::Instant::now();
+            dct.srq().recv(&[mem.as_slice()], 0)?;
+            start.elapsed()
+        };
+
         let wc = dct.cq().poll_one_blocking()?;
         if (i + 1) % 10000 == 0 {
             println!("{}", String::from_utf8_lossy(&mem[..wc.ok()?]));
         }
     }
-
     cli.join().unwrap()?;
+
+    println!("Average recv time: {:?}", total_recv_time / 100000);
     Ok(())
 }
