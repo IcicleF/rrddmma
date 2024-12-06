@@ -19,5 +19,8 @@ pub struct ExtCompareSwapParams {
     pub swap_mask: NonNull<u64>,
 }
 
+#[cfg(mlnx4)]
 unsafe impl Send for ExtCompareSwapParams {}
+
+#[cfg(mlnx4)]
 unsafe impl Sync for ExtCompareSwapParams {}
