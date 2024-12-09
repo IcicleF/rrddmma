@@ -57,6 +57,9 @@ impl_ibv_wrapper_traits!(ibv_context, IbvContext);
 struct ContextInner {
     ctx: IbvContext,
     attr: ibv_device_attr,
+
+    #[cfg(mlnx4)]
+    clock_info: ibv_exp_clock_info,
 }
 
 impl Drop for ContextInner {
@@ -78,9 +81,29 @@ pub struct Context {
 
 impl Context {
     /// Create a context from an opened device and its attributes.
+    #[cfg(not(mlnx4))]
     pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
         Self {
             inner: Arc::new(ContextInner { ctx, attr }),
+            ctx,
+        }
+    }
+
+    /// Create a context from an opened device and its attributes.
+    #[cfg(mlnx4)]
+    pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
+        // SAFETY: FFI.
+        let clock_info = unsafe {
+            let mut values = std::mem::zeroed();
+            ibv_exp_query_values(ctx.as_ptr(), IBV_EXP_VALUES_CLOCK_INFO as _, &mut values);
+            values.clock_info
+        };
+        Self {
+            inner: Arc::new(ContextInner {
+                ctx,
+                attr,
+                clock_info,
+            }),
             ctx,
         }
     }
@@ -117,6 +140,12 @@ impl Context {
     /// Get the device attributes.
     pub fn attr(&self) -> &ibv_device_attr {
         &self.inner.attr
+    }
+
+    /// Get the clock information.
+    #[cfg(mlnx4)]
+    pub fn clock_info(&self) -> &ibv_exp_clock_info {
+        &self.inner.clock_info
     }
 }
 

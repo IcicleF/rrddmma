@@ -266,7 +266,7 @@ impl Wc {
     #[inline]
     pub fn ok(&self) -> Result<usize, WcStatus> {
         match self.status() {
-            WcStatus::Success => Ok(self.bytes()),
+            WcStatus::Success => Ok(self.byte_len()),
             _ => Err(self.status()),
         }
     }
@@ -279,7 +279,7 @@ impl Wc {
 
     /// Get the number of bytes processed or transferred.
     #[inline]
-    pub fn bytes(&self) -> usize {
+    pub fn byte_len(&self) -> usize {
         self.0.byte_len as usize
     }
 

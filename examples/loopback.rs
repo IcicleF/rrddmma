@@ -1,5 +1,3 @@
-use core::slice;
-
 use quanta::Instant;
 use rrddmma::{prelude::*, wrap::RegisteredMem};
 
@@ -33,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     println!("Time elapsed (memcpy): {:?}", time.elapsed());
 
     assert_eq!(
-        unsafe { slice::from_raw_parts(mem1.as_ptr(), 4096) },
+        unsafe { std::slice::from_raw_parts(mem1.as_ptr(), 4096) },
         &[0x14; 4096]
     );
 
@@ -55,7 +53,7 @@ fn main() -> anyhow::Result<()> {
 
     println!("Time elapsed (RDMA): {:?}", time.elapsed());
     assert_eq!(
-        unsafe { slice::from_raw_parts(mem1.as_ptr(), 4096) },
+        unsafe { std::slice::from_raw_parts(mem1.as_ptr(), 4096) },
         &[0x14; 4096]
     );
 

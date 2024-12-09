@@ -532,6 +532,103 @@ pub unsafe fn ibv_exp_query_dct(
     }
 }
 
+/// Create an experimental CQ.
+#[inline]
+pub unsafe fn ibv_exp_create_cq(
+    context: *mut ibv_context,
+    cqe: ::std::os::raw::c_int,
+    cq_context: *mut ::std::os::raw::c_void,
+    channel: *mut ibv_comp_channel,
+    comp_vector: ::std::os::raw::c_int,
+    attr: *mut ibv_exp_cq_init_attr,
+) -> *mut ibv_cq {
+    let vctx = verbs_get_exp_ctx_op!(context, exp_create_cq);
+    if vctx.is_null() {
+        *__errno_location() = ENOSYS;
+        std::ptr::null_mut()
+    } else {
+        IBV_EXP_RET_NULL_ON_INVALID_COMP_MASK_compat!(
+            (*attr).comp_mask,
+            IBV_EXP_CQ_INIT_ATTR_RESERVED1 - 1,
+            "ibv_exp_create_cq"
+        );
+        pthread_mutex_lock(&mut (*context).mutex);
+        let cq = (*vctx).exp_create_cq.unwrap()(context, cqe, channel, comp_vector, attr);
+        if !cq.is_null() {
+            (*cq).context = context;
+            (*cq).channel = channel;
+            if !channel.is_null() {
+                (*channel).refcnt += 1;
+            }
+            (*cq).cq_context = cq_context;
+            (*cq).comp_events_completed = 0;
+            (*cq).async_events_completed = 0;
+            pthread_mutex_init(&mut (*cq).mutex, std::ptr::null());
+            pthread_cond_init(&mut (*cq).cond, std::ptr::null());
+        }
+
+        pthread_mutex_unlock(&mut (*context).mutex);
+        cq
+    }
+}
+
+/// Poll a CQ for an experimental WC.
+#[inline]
+pub unsafe fn ibv_exp_poll_cq(
+    ibcq: *mut ibv_cq,
+    num_entries: ::std::os::raw::c_int,
+    wc: *mut ibv_exp_wc,
+    wc_size: u32,
+) -> ::std::os::raw::c_int {
+    let vctx = verbs_get_exp_ctx_op!((*ibcq).context, drv_exp_ibv_poll_cq);
+    if vctx.is_null() {
+        -ENOSYS
+    } else {
+        (*vctx).drv_exp_ibv_poll_cq.unwrap()(ibcq, num_entries, wc, wc_size)
+    }
+}
+
+/// Query device values.
+#[inline]
+pub unsafe fn ibv_exp_query_values(
+    context: *mut ibv_context,
+    q_values: ::std::os::raw::c_int,
+    values: *mut ibv_exp_values,
+) -> ::std::os::raw::c_int {
+    let vctx = verbs_get_exp_ctx_op!(context, drv_exp_query_values);
+    if vctx.is_null() {
+        -ENOSYS
+    } else {
+        IBV_EXP_RET_EINVAL_ON_INVALID_COMP_MASK_compat!(
+            (*values).comp_mask,
+            IBV_EXP_VALUES_RESERVED - 1,
+            "ibv_exp_query_values"
+        );
+        (*vctx).drv_exp_query_values.unwrap()(context, q_values, values)
+    }
+}
+
+/// Convert device timestamp to system clock.
+#[inline]
+pub unsafe fn ibv_exp_cqe_ts_to_ns(clock_info: *const ibv_exp_clock_info, ts: u64) -> u64 {
+    IBV_EXP_RET_ZERO_ON_INVALID_COMP_MASK_compat!(
+        (*clock_info).comp_mask,
+        IBV_EXP_CLOCK_INFO_RESERVED - 1,
+        "ibv_exp_cqe_ts_to_ns"
+    );
+
+    let mut delta = (ts - (*clock_info).cycles) & (*clock_info).mask;
+    let mut nsec = (*clock_info).nsec;
+
+    if delta > (*clock_info).mask / 2 {
+        delta -= ((*clock_info).cycles - ts) & (*clock_info).mask;
+        nsec -= ((delta * (*clock_info).mult as u64) - (*clock_info).frac) >> (*clock_info).shift;
+    } else {
+        nsec += ((delta * (*clock_info).mult as u64) + (*clock_info).frac) >> (*clock_info).shift;
+    }
+    nsec
+}
+
 pub const IBV_EXP_DCT_STATE_ACTIVE: u8 = 0;
 pub const IBV_EXP_DCT_STATE_DRAINING: u8 = 1;
 pub const IBV_EXP_DCT_STATE_DRAINED: u8 = 2;

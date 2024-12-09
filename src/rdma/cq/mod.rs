@@ -1,5 +1,6 @@
 //! Completion queue and Work completion.
 
+mod exp;
 mod wc;
 
 use std::fmt;
@@ -10,6 +11,8 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+#[cfg(mlnx4)]
+pub use self::exp::*;
 pub use self::wc::*;
 use super::context::Context;
 use crate::bindings::*;
@@ -84,6 +87,43 @@ impl Cq {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 0,
+            )
+        };
+        let cq = NonNull::new(cq).ok_or_else(IoError::last_os_error)?;
+        let cq = IbvCq::from(cq);
+
+        Ok(Self {
+            inner: Arc::new(CqInner {
+                ctx: ctx.clone(),
+                cq,
+            }),
+            cq,
+        })
+    }
+
+    /// Create a new completion queue with experimental features.
+    #[cfg(mlnx4)]
+    pub fn new_exp(ctx: &Context, capacity: u32) -> Result<Cq, CqCreationError> {
+        let max_capacity = ctx.attr().max_cqe as u32;
+        if capacity > max_capacity {
+            return Err(CqCreationError::TooManyCqes(max_capacity));
+        }
+
+        // SAFETY: FFI.
+        let cq = unsafe {
+            let mut init_attr = ibv_exp_cq_init_attr {
+                comp_mask: IBV_EXP_CQ_INIT_ATTR_FLAGS,
+                flags: IBV_EXP_CQ_TIMESTAMP,
+                ..Default::default()
+            };
+
+            ibv_exp_create_cq(
+                ctx.as_raw(),
+                capacity as i32,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut init_attr,
             )
         };
         let cq = NonNull::new(cq).ok_or_else(IoError::last_os_error)?;
