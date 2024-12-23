@@ -9,6 +9,19 @@ use std::{io, mem};
 pub struct ExpWc(pub ibv_exp_wc);
 
 impl ExpWc {
+    /// Get the work request ID.
+    #[inline]
+    pub fn wr_id(&self) -> u64 {
+        self.0.wr_id
+    }
+
+    /// Get the completion status.
+    #[inline]
+    pub fn status(&self) -> WcStatus {
+        // SAFETY: SAFETY: enum constraints of `libibverbs`.
+        unsafe { WcStatus::from_unsafe(self.0.status) }
+    }
+
     /// Read the timestamp of the work completion.
     pub fn timestamp(&self) -> Option<u64> {
         (self.0.exp_wc_flags & IBV_EXP_WC_WITH_TIMESTAMP != 0).then(|| self.0.timestamp)
