@@ -171,7 +171,6 @@ fn gen_verb_bindings(bindings: Bindings) {
         .blocklist_type("ibv_global_route")
         .blocklist_type("ibv_send_wr.*")
         .blocklist_type("ibv_wc")
-        .blocklist_function("ibv_get_device_list")
         .bitfield_enum("ibv_device_cap_flags")
         .bitfield_enum("ibv_odp_transport_cap_bits")
         .bitfield_enum("ibv_odp_general_caps")
