@@ -31,14 +31,10 @@ chrono = "0.4"
 
 [build-dependencies]
 pkg-config = "0.3"
-bindgen = "0.70"
+bindgen = "0.71"
+anyhow = "1.0"
 
 [features]
-warned_spin = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(mlnx4)',
-    'cfg(mlnx5)',
-    'cfg(manual_mlx5)',
-] }
+default = []
+legacy = []
+exp = ["legacy"]

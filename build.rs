@@ -2,31 +2,31 @@ use std::env::{self, consts};
 use std::path::Path;
 use std::process::Command;
 
+use anyhow::{anyhow, Result};
+
+/// Verbs version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VerbsVersion {
-    V4,
-    V5,
+    Legacy,
+    LegacyWithExp,
+    RdmaCore,
 }
 
-struct IbverbsLinkage {
+/// Binding options.
+#[derive(Debug, Clone)]
+struct Bindings {
     ver: VerbsVersion,
-    include_dirs: Vec<String>,
+    includes: Vec<String>,
+    linkages: Vec<String>,
 }
 
-impl IbverbsLinkage {
-    fn new(ver: VerbsVersion, include_dirs: Vec<String>) -> Self {
-        Self { ver, include_dirs }
-    }
-}
+/// Try to bind to legacy `MLNX_OFED` (v4.x) installation.
+fn link_ibverbs_legacy() -> Result<Bindings> {
+    let output = Command::new("ofed_info").arg("-n").output().map_err(|_| {
+        anyhow!("failed to run `ofed_info`, which is required to link to legacy MLNX_OFED versions")
+    })?;
 
-/// Try to link to existing `MLNX_OFED` installation.
-fn link_mlnx_ofed() -> Result<IbverbsLinkage, ()> {
-    let output = Command::new("ofed_info")
-        .arg("-n")
-        .output()
-        .map_err(|_| ())?;
-
-    // Parse the version number until the first '.'
+    // Parse the version number until the first period (`.`).
     let ver_num = output
         .stdout
         .iter()
@@ -34,113 +34,92 @@ fn link_mlnx_ofed() -> Result<IbverbsLinkage, ()> {
         .copied()
         .collect::<Vec<_>>();
     let ver_num = String::from_utf8(ver_num)
-        .map_err(|_| ())?
+        .map_err(|e| anyhow!("failed to parse `ofed_info` output: {:?}", e))?
         .parse::<u32>()
-        .map_err(|_| ())?;
-
-    match ver_num {
-        4 => {
-            // MLNX_OFED v4.9-x LTS will not register the `libibverbs` library to
-            // `pkg-config`, so search for it manually.
-            //
-            // We assume the default installation path as `/usr`.
-            // By default, we do not need to specify the include and library paths,
-            // as they are already in the default search paths.
-            let lib_dir = if let Ok(lib_dir) = env::var("MLNX_OFED_LIB_DIR") {
-                Path::new(&lib_dir).to_owned()
-            } else {
-                Path::new("/usr/lib").to_owned()
-            };
-
-            let dylib_name = format!("{}ibverbs{}", consts::DLL_PREFIX, consts::DLL_SUFFIX);
-            if lib_dir.join(dylib_name).exists() || lib_dir.join("libibverbs.a").exists() {
-                println!("cargo:rustc-link-search=native={}", lib_dir.display());
-                println!("cargo:rustc-link-lib=ibverbs");
-                let include_dirs = if let Ok(include_dir) = env::var("MLNX_OFED_INCLUDE_DIR") {
-                    vec![include_dir]
-                } else {
-                    Vec::new()
-                };
-                Ok(IbverbsLinkage::new(VerbsVersion::V4, include_dirs))
-            } else {
-                Err(())
-            }
-        }
-        v if v >= 5 => {
-            // MLNX_OFED v5.x LTS will register the `libibverbs` library to `pkg-config`.
-            // Things are similar for the newest v23.x or higher.
-            link_ibverbs()
-        }
-        _ => Err(()),
+        .map_err(|e| anyhow!("failed to parse version number: {:?}", e))?;
+    if ver_num != 4 {
+        return Err(anyhow!(
+            "unsupported MLNX_OFED version {} for legacy MLNX_OFED linkage",
+            ver_num
+        ));
     }
+
+    // MLNX_OFED v4.9-x LTS will not register the `libibverbs` library to
+    // `pkg-config`, so search for it manually.
+    //
+    // We assume the default installation path as `/usr`.
+    // By default, we do not need to specify the include and library paths,
+    // as they are already in the default search paths.
+    const DEFAULT_INSTALLATION_PATH: &str = "/usr/lib";
+    let libdir_str = if let Ok(lib_dir) = env::var("MLNX_OFED_LIB_DIR") {
+        lib_dir
+    } else {
+        DEFAULT_INSTALLATION_PATH.to_owned()
+    };
+    let lib_dir = Path::new(&libdir_str);
+
+    const LIBRARIES: [&str; 3] = ["ibverbs", "mlx5", "mlx4"];
+    let mut linkages = Vec::new();
+    for lib in LIBRARIES {
+        let lib_name = format!("{}{}{}", consts::DLL_PREFIX, lib, consts::DLL_SUFFIX);
+        if lib_dir.join(lib_name).exists() {
+            println!("cargo:rustc-link-search=native={}", lib_dir.display());
+            linkages.push(lib.to_owned());
+            continue;
+        }
+        assert!(
+            lib != "ibverbs",
+            "cannot find ibverbs library; you may use `MLNX_OFED_LIB_DIR` to specify a path"
+        );
+    }
+
+    // At least link on `libibverbs`.
+    let includes = if let Ok(includes) = env::var("MLNX_OFED_INCLUDE_DIR") {
+        includes
+            .split(':')
+            .map(|p| p.to_owned())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    Ok(Bindings {
+        ver: VerbsVersion::Legacy,
+        includes,
+        linkages,
+    })
 }
 
-/// Try to link to existing `libibverbs` installation.
-fn link_ibverbs() -> Result<IbverbsLinkage, ()> {
+/// Try to bind to RDMA-Core `libibverbs` installation.
+fn link_ibverbs_rdmacore() -> Result<Bindings> {
+    // There should be pkg-config support. Use it.
     let lib = pkg_config::Config::new()
         .atleast_version("1.8.28")
         .statik(false)
         .probe("libibverbs")
-        .map_err(|_| ())?;
+        .map_err(|e| anyhow!("failed to probe `libibverbs`: {:?}", e))?;
 
-    Ok(IbverbsLinkage::new(
-        VerbsVersion::V5,
-        lib.include_paths
+    Ok(Bindings {
+        ver: VerbsVersion::RdmaCore,
+        includes: lib
+            .include_paths
             .iter()
             .map(|p| p.to_str().unwrap().to_owned())
             .collect(),
-    ))
+        linkages: lib.libs.iter().map(|s| s.to_owned()).collect(),
+    })
 }
 
-/// Try to build `libibverbs` from source and link to it.
-fn link_build() -> Result<IbverbsLinkage, ()> {
-    // Initialize and update submodules.
-    let cur_dir = env::current_dir().map_err(|_| ())?;
-    if cur_dir.join(".git").is_dir() {
-        Command::new("git")
-            .args(["submodule", "update", "--init"])
-            .status()
-            .map_err(|_| ())?;
-    } else if !cur_dir.join("vendor/rdma-core").is_dir() {
-        return Err(());
+/// Link to specific `libibverbs` installation.
+fn link_ibverbs() -> Result<Bindings> {
+    if cfg!(feature = "legacy") {
+        let mut bindings = link_ibverbs_legacy()?;
+        if cfg!(feature = "exp") {
+            bindings.ver = VerbsVersion::LegacyWithExp;
+        }
+        Ok(bindings)
+    } else {
+        link_ibverbs_rdmacore()
     }
-
-    // Build vendor/rdma-core.
-    Command::new("bash")
-        .current_dir("vendor/rdma-core/")
-        .arg("build.sh")
-        .env("CFLAGS", "-fPIC")
-        .env("EXTRA_CMAKE_FLAGS", "-DENABLE_STATIC=1")
-        .status()
-        .map_err(|_| ())?;
-
-    // Link to static library, otherwise dylibs cannot be found when used as
-    // a dependency.
-    pkg_config::Config::new()
-        .atleast_version("3.4.0")
-        .statik(false)
-        .probe("libnl-3.0")
-        .map_err(|_| ())?;
-    pkg_config::Config::new()
-        .atleast_version("3.4.0")
-        .statik(false)
-        .probe("libnl-route-3.0")
-        .map_err(|_| ())?;
-
-    println!(
-        "cargo:rustc-link-search=native={}",
-        cur_dir.join("vendor/rdma-core/build/lib").display()
-    );
-    println!("cargo:rustc-link-lib=static=ibverbs");
-    println!("cargo:rustc-link-lib=static=mlx5");
-
-    // Static linkage requires customized provider registration.
-    println!("cargo:rustc-cfg=manual_mlx5");
-
-    Ok(IbverbsLinkage::new(
-        VerbsVersion::V5,
-        vec!["vendor/rdma-core/libibverbs".to_owned()],
-    ))
 }
 
 /// Build flow:
@@ -149,40 +128,31 @@ fn link_build() -> Result<IbverbsLinkage, ()> {
 /// 2. If failed, try to link to existing `libibverbs` installation.
 /// 3. If failed, build `libibverbs` from source.
 fn main() {
-    // Refuse to compile on non-64-bit platforms.
+    // Refuse to compile on non-64-bit or non-Linux platforms.
     if cfg!(not(target_pointer_width = "64")) {
-        panic!("`rrddmma` currently only supports 64-bit platforms");
+        panic!("`rrddmma` only supports 64-bit platforms");
+    }
+    if cfg!(not(target_os = "linux")) {
+        panic!("`rrddmma` only supports Linux platforms");
     }
 
-    println!("cargo:rerun-if-changed=src/bindings/verbs.h");
-
-    // Respect existing `MLNX_OFED` installation.
-    if let Ok(link) = link_mlnx_ofed() {
-        println!("cargo:rerun-if-env-changed=MLNX_OFED_INCLUDE_DIR");
-        println!("cargo:rerun-if-env-changed=MLNX_OFED_LIB_DIR");
-        gen_verb_bindings(link.ver, link.include_dirs);
-        return;
+    // Respect existing MLNX_OFED or DOCA_OFED installation.
+    match link_ibverbs() {
+        Ok(bindings) => gen_verb_bindings(bindings),
+        Err(e) => panic!("{:?}", e),
     }
-
-    // Respect existing `libibverbs` installation.
-    if let Ok(link) = link_ibverbs() {
-        gen_verb_bindings(link.ver, link.include_dirs);
-        return;
-    }
-
-    // Build the `ibverbs` library.
-    if let Ok(link) = link_build() {
-        let mut include_dirs = link.include_dirs;
-        include_dirs.push("vendor/rdma-core/build/include".to_owned());
-        gen_verb_bindings(link.ver, include_dirs);
-        return;
-    }
-
-    panic!("cannot link to MLNX_OFED installations, libibverbs installations, or build libibverbs from source");
 }
 
-fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
-    let include_args = include_dirs.iter().map(|p| format!("-I{}", p));
+fn gen_verb_bindings(bindings: Bindings) {
+    // Linkages.
+    for lib in bindings.linkages {
+        println!("cargo:rustc-link-lib={}", lib);
+    }
+
+    // Includes.
+    let include_args = bindings.includes.iter().map(|p| format!("-I{}", p));
+
+    // Common arguments.
     let mut builder = bindgen::builder()
         .clang_args(include_args)
         .header("src/bindings/verbs.h")
@@ -263,10 +233,8 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
         .constified_enum_module("ib_uverbs_advise_mr_advice")
         .rustified_enum("ibv_event_type");
 
-    match ver {
-        VerbsVersion::V4 => {
-            println!("cargo:rustc-cfg=mlnx4");
-
+    match bindings.ver {
+        VerbsVersion::LegacyWithExp => {
             // `ibv_exp_*` bindings
             builder = builder
                 .blocklist_type("ibv_exp_send_wr.*")
@@ -289,14 +257,13 @@ fn gen_verb_bindings(ver: VerbsVersion, include_dirs: Vec<String>) {
                 .constified_enum_module("ibv_exp_calc_data_size")
                 .constified_enum_module("ibv_exp_dm_memcpy_dir");
         }
-        VerbsVersion::V5 => {
-            println!("cargo:rustc-cfg=mlnx5");
-
+        VerbsVersion::RdmaCore => {
             // RDMA-Core bindings
             builder = builder
                 .blocklist_type("ibv_ops_wr")
                 .blocklist_type("_compat_ibv_port_attr");
         }
+        _ => {}
     }
 
     let bindings = builder

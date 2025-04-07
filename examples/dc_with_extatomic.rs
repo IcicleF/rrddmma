@@ -1,6 +1,7 @@
 use std::ptr;
 use std::ptr::NonNull;
 
+#[cfg(mlnx4)]
 use rrddmma::rdma::qp::ExtCompareSwapParams;
 
 #[cfg(mlnx5)]
