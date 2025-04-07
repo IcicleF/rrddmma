@@ -33,7 +33,7 @@ pub mod errors {
     pub use super::rdma::nic::{NicProbeError, PortQueryError};
     pub use super::rdma::qp::QpCreationError;
 
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub use super::rdma::dct::DctCreationError;
 }
 

@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 
 /// Extended atomic compare-and-swap parameters.
 #[derive(Debug, Clone, Copy)]
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 pub struct ExtCompareSwapParams {
     /// Pointer to the compare value.
     pub compare: NonNull<u64>,
@@ -19,8 +19,8 @@ pub struct ExtCompareSwapParams {
     pub swap_mask: NonNull<u64>,
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 unsafe impl Send for ExtCompareSwapParams {}
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 unsafe impl Sync for ExtCompareSwapParams {}

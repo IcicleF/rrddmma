@@ -58,7 +58,7 @@ struct ContextInner {
     ctx: IbvContext,
     attr: ibv_device_attr,
 
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     clock_info: ibv_exp_clock_info,
 }
 
@@ -90,7 +90,7 @@ impl Context {
     }
 
     /// Create a context from an opened device and its attributes.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
         // SAFETY: FFI.
         let clock_info = unsafe {
@@ -143,7 +143,7 @@ impl Context {
     }
 
     /// Get the clock information.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub fn clock_info(&self) -> &ibv_exp_clock_info {
         &self.inner.clock_info
     }

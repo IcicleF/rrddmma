@@ -1,9 +1,9 @@
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 fn main() {
     eprintln!("cq_ex features is not yet implemented for MLNX_OFED v5.x+.");
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
     use rrddmma::{prelude::*, wrap::RegisteredMem};
 

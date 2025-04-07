@@ -195,22 +195,22 @@ pub enum WcStatus {
     /// **Tag Matching Error:** a failure occurred when trying to issue an
     /// `ibv_post_srq_ops` with opcode `IBV_WR_TAG_DEL` to remove a previously
     /// added tag entry, due to concurrent tag consumption.
-    #[cfg(mlnx5)]
+    #[cfg(not(feature = "legacy"))]
     #[error("tag matching error")]
     TmErr = ibv_wc_status::IBV_WC_TM_ERR as _,
 
     /// **Rendezvous Request Tagged Buffer Insufficient:** this is due to
     /// a posted tagged buffer is insufficient to hold the data of a
     /// rendezvous request.
-    #[cfg(mlnx5)]
+    #[cfg(not(feature = "legacy"))]
     #[error("rendezvous request tagged buffer insufficient")]
     TmRndvIncomplete = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE as _,
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 const WCSTATUS_UPPER_BOUND: u32 = ibv_wc_status::IBV_WC_GENERAL_ERR;
 
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 const WCSTATUS_UPPER_BOUND: u32 = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE;
 
 impl WcStatus {

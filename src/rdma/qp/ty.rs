@@ -13,7 +13,7 @@ pub enum QpType {
     Ud = ibv_qp_type::IBV_QPT_UD as _,
 
     /// Extended reliable connection (deprecated).
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     Xrc = ibv_qp_type::IBV_QPT_XRC as _,
 
     /// Raw packet (or Raw Ethernet).
@@ -26,15 +26,15 @@ pub enum QpType {
     XrcTgt = ibv_qp_type::IBV_QPT_XRC_RECV as _,
 
     /// Dynamically-connected QP initiator.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     DcIni = ibv_qp_type::IBV_EXP_QPT_DC_INI as _,
 
     /// Driver-specific QP type.
-    #[cfg(mlnx5)]
+    #[cfg(not(feature = "legacy"))]
     Driver = ibv_qp_type::IBV_QPT_DRIVER as _,
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 impl QpType {
     const fn is_reliable_impl(self) -> bool {
         matches!(self, Self::Rc | Self::Xrc | Self::XrcIni | Self::XrcTgt)
@@ -45,7 +45,7 @@ impl QpType {
     }
 }
 
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 impl QpType {
     const fn is_reliable_impl(self) -> bool {
         matches!(self, Self::Rc | Self::XrcIni | Self::XrcTgt)
@@ -95,14 +95,14 @@ impl From<u32> for QpType {
             ibv_qp_type::IBV_QPT_RC => QpType::Rc,
             ibv_qp_type::IBV_QPT_UC => QpType::Uc,
             ibv_qp_type::IBV_QPT_UD => QpType::Ud,
-            #[cfg(mlnx4)]
+            #[cfg(feature = "legacy")]
             ibv_qp_type::IBV_QPT_XRC => QpType::Xrc,
             ibv_qp_type::IBV_QPT_RAW_PACKET => QpType::RawPacket,
             ibv_qp_type::IBV_QPT_XRC_SEND => QpType::XrcIni,
             ibv_qp_type::IBV_QPT_XRC_RECV => QpType::XrcTgt,
-            #[cfg(mlnx4)]
+            #[cfg(feature = "legacy")]
             ibv_qp_type::IBV_EXP_QPT_DC_INI => QpType::DcIni,
-            #[cfg(mlnx5)]
+            #[cfg(not(feature = "legacy"))]
             ibv_qp_type::IBV_QPT_DRIVER => QpType::Driver,
             _ => panic!("unrecognized QP type: {}", qp_type),
         }

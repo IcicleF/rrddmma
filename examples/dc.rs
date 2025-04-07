@@ -1,9 +1,9 @@
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 fn main() {
     eprintln!("DC is not yet implemented on MLNX v5.x");
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
     use rrddmma::{prelude::*, wrap::RegisteredMem};
     use std::{thread, time::Duration};

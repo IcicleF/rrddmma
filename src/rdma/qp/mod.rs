@@ -8,7 +8,7 @@ use std::{fmt, mem, ptr};
 use thiserror::Error;
 
 use crate::bindings::*;
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 use crate::rdma::dct::Dct;
 use crate::rdma::{
     context::Context,
@@ -169,14 +169,14 @@ impl Qp {
         let init_attr = builder.unwrap();
         Self::check_caps(pd.context(), &init_attr.caps)?;
 
-        #[cfg(mlnx4)]
+        #[cfg(feature = "legacy")]
         fn do_create_qp(pd: &Pd, init_attr: &QpInitAttr) -> *mut ibv_qp {
             let mut init_attr = init_attr.to_exp_init_attr(pd);
             // SAFETY: FFI.
             unsafe { ibv_exp_create_qp(pd.context().as_raw(), &mut init_attr) }
         }
 
-        #[cfg(mlnx5)]
+        #[cfg(not(feature = "legacy"))]
         fn do_create_qp(pd: &Pd, init_attr: &QpInitAttr) -> *mut ibv_qp {
             let mut init_attr = init_attr.to_init_attr();
             // SAFETY: FFI.
@@ -311,7 +311,7 @@ impl Qp {
     /// # Panics
     ///
     /// Panic if the QP type is not `DcIni`.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     fn modify_dcini_reset2rts(&self) -> io::Result<()> {
         assert_eq!(self.qp_type(), QpType::DcIni);
         let mut attr = unsafe { mem::zeroed::<ibv_exp_qp_attr>() };
@@ -402,7 +402,7 @@ impl Qp {
 }
 
 impl Qp {
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     fn send_impl(
         &self,
         local: &[MrSlice],
@@ -460,7 +460,7 @@ impl Qp {
         from_c_ret_explained(ret, Self::send_err_explanation)
     }
 
-    #[cfg(mlnx5)]
+    #[cfg(not(feature = "legacy"))]
     fn send_impl(
         &self,
         local: &[MrSlice],
@@ -639,7 +639,7 @@ impl Qp {
             }
             QpType::Rc => self.modify_reset2init()?,
 
-            #[cfg(mlnx4)]
+            #[cfg(feature = "legacy")]
             QpType::DcIni => self.modify_dcini_reset2rts()?,
 
             _ => {}
@@ -717,9 +717,9 @@ impl Qp {
     ///
     /// Panic if this QP is not a DC initiator.
     pub fn set_dc_peer(&mut self, peer: QpPeer) {
-        #[cfg(mlnx4)]
+        #[cfg(feature = "legacy")]
         const EXPECTED_QP_TYPE: QpType = QpType::DcIni;
-        #[cfg(mlnx5)]
+        #[cfg(not(feature = "legacy"))]
         const EXPECTED_QP_TYPE: QpType = QpType::Driver;
 
         assert_eq!(self.qp_type(), EXPECTED_QP_TYPE, "QP is not a DC initiator");
@@ -1026,7 +1026,7 @@ impl Qp {
     /// | QP Type | RC | UC | UD | DC |
     /// |---------|----|----|----|----|
     /// | OK?     | Y  | N  | N  | Y  |
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub unsafe fn ext_compare_swap<const N: usize>(
         &self,
         local: MrSlice,
@@ -1111,7 +1111,7 @@ impl Qp {
     /// | QP Type | RC | UC | UD | DC |
     /// |---------|----|----|----|----|
     /// | OK?     | Y  | N  | N  | Y  |
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub unsafe fn ext_fetch_add<const N: usize>(
         &self,
         local: MrSlice,
@@ -1228,7 +1228,7 @@ fn check_atomic_mem(local: MrSlice, remote: MrRemote) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 fn check_ext_atomic_mem<const N: usize>(local: MrSlice, remote: MrRemote) -> io::Result<()> {
     if !matches!(N, 8 | 16 | 32) {
         return Err(IoError::new(

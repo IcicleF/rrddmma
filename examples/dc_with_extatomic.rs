@@ -1,15 +1,15 @@
 use std::ptr;
 use std::ptr::NonNull;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 use rrddmma::rdma::qp::ExtCompareSwapParams;
 
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 fn main() {
     eprintln!("DC is not yet implemented on MLNX v5.x");
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
     use rrddmma::{prelude::*, wrap::RegisteredMem};
     use std::thread;

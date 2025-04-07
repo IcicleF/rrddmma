@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 pub use self::exp::*;
 pub use self::wc::*;
 use super::context::Context;
@@ -102,7 +102,7 @@ impl Cq {
     }
 
     /// Create a new completion queue with experimental features.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub fn new_exp(ctx: &Context, capacity: u32) -> Result<Cq, CqCreationError> {
         let max_capacity = ctx.attr().max_cqe as u32;
         if capacity > max_capacity {

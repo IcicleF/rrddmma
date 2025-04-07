@@ -5,9 +5,9 @@
 
 pub use crate::rdma::context::Context;
 pub use crate::rdma::cq::{Cq, Wc, WcOpcode, WcStatus};
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 pub use crate::rdma::cq::{ExpCq, ExpWc};
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 pub use crate::rdma::dct::Dct;
 pub use crate::rdma::mr::{Mr, MrRemote, MrSlice, Slicing};
 pub use crate::rdma::nic::{Nic, Port};

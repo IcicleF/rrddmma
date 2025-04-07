@@ -1,9 +1,9 @@
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 fn main() {
     eprintln!("MLNX_OFED v5.x or newer does not support ExtAtomics");
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
     use rrddmma::rdma::qp::ExpFeature;
     use rrddmma::{ctrl, prelude::*, wrap::RegisteredMem};

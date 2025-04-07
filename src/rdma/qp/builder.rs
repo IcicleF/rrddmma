@@ -1,4 +1,4 @@
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 use std::collections::HashSet;
 use std::mem;
 
@@ -9,7 +9,7 @@ use crate::rdma::pd::*;
 use super::{Qp, QpCreationError, QpType};
 
 /// Experimental features available in MLNX_OFED v4.x drivers.
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ExpFeature {
     /// Enable extended atomic compare-and-swap & fetch-and-add.
@@ -131,7 +131,7 @@ pub struct QpBuilder<'a> {
     pub(super) global_routing: bool,
 
     /// Enabled experimental features.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub(super) features: HashSet<ExpFeature>,
 }
 
@@ -147,7 +147,7 @@ impl<'a> QpBuilder<'a> {
             sq_sig_all: None,
             global_routing: true,
 
-            #[cfg(mlnx4)]
+            #[cfg(feature = "legacy")]
             features: Default::default(),
         }
     }
@@ -196,14 +196,14 @@ impl<'a> QpBuilder<'a> {
     }
 
     /// Enable experimental features for the QP.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub fn enable_feature(mut self, feature: ExpFeature) -> Self {
         self.features.insert(feature);
         self
     }
 
     /// Disable experimental features for the QP.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub fn disable_feature(mut self, feature: ExpFeature) -> Self {
         self.features.remove(&feature);
         self
@@ -231,7 +231,7 @@ impl<'a> QpBuilder<'a> {
             sq_sig_all: self.sq_sig_all.expect("sq_sig_all must be explicitly set"),
             global_routing: self.global_routing,
 
-            #[cfg(mlnx4)]
+            #[cfg(feature = "legacy")]
             features: self.features,
         }
     }
@@ -264,7 +264,7 @@ pub(super) struct QpInitAttr {
     pub global_routing: bool,
 
     /// Experimental feature flags.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub features: HashSet<ExpFeature>,
 }
 
@@ -289,7 +289,7 @@ impl QpInitAttr {
     }
 
     /// Create an [`ibv_exp_qp_init_attr`] from the attributes.
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     pub fn to_exp_init_attr(&self, pd: &Pd) -> ibv_exp_qp_init_attr {
         let mut attr = ibv_exp_qp_init_attr {
             send_cq: self.send_cq.as_raw(),

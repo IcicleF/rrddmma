@@ -202,10 +202,10 @@ pub unsafe fn ibv_bind_mw(
     }
 }
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 const ENOSYS_OR_EOPNOTSUPP: ::std::os::raw::c_int = ENOSYS;
 
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 const ENOSYS_OR_EOPNOTSUPP: ::std::os::raw::c_int = EOPNOTSUPP;
 
 /// Open an extended connection domain.

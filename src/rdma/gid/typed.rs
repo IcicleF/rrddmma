@@ -1,5 +1,5 @@
 use std::io::Error as IoError;
-#[cfg(mlnx5)]
+#[cfg(not(feature = "legacy"))]
 use std::io::{self, ErrorKind as IoErrorKind};
 use std::mem;
 use std::net::Ipv6Addr;
@@ -60,7 +60,7 @@ pub struct GidTyped {
 }
 
 impl GidTyped {
-    #[cfg(mlnx4)]
+    #[cfg(feature = "legacy")]
     fn query_impl(
         ctx: IbvContext,
         port_num: u8,
@@ -96,7 +96,7 @@ impl GidTyped {
         Ok(GidTyped::new(Gid(gid), ty))
     }
 
-    #[cfg(mlnx5)]
+    #[cfg(not(feature = "legacy"))]
     fn query_impl(
         ctx: IbvContext,
         port_num: u8,

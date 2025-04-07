@@ -10,82 +10,32 @@
 
 mod common;
 
-#[cfg(mlnx4)]
-mod mlnx4;
+#[cfg(feature = "legacy")]
+mod legacy;
 
-#[cfg(mlnx5)]
-mod mlnx5;
+#[cfg(not(feature = "legacy"))]
+mod rdma_core;
 
 mod private {
     use libc::*;
     include!(concat!(env!("OUT_DIR"), "/verbs_bindings.rs"));
 
-    #[cfg(mlnx4)]
-    pub use super::mlnx4::*;
+    #[cfg(feature = "legacy")]
+    pub use super::legacy::*;
 
-    #[cfg(mlnx5)]
-    pub use super::mlnx5::*;
+    #[cfg(not(feature = "legacy"))]
+    pub use super::rdma_core::*;
 }
 
 pub(crate) use self::private::*;
 
-#[cfg(not(manual_mlx5))]
-mod __ibv_get_device_list_mod {
-    use super::ibv_device;
-
-    extern "C" {
-        /// Get list of IB devices currently available.
-        ///
-        /// Returns a NULL-terminated array of IB devices.
-        /// The array can be released with `ibv_free_device_list()`.
-        pub fn ibv_get_device_list(num_devices: *mut ::std::os::raw::c_int)
-            -> *mut *mut ibv_device;
-    }
-}
-
-#[cfg(manual_mlx5)]
-mod __ibv_get_device_list_mod {
-    use super::ibv_device;
-
-    #[repr(C)]
-    struct verbs_device_ops {
-        _private: [u8; 0],
-    }
-
-    extern "C" {
-        #[no_mangle]
-        static mut verbs_provider_mlx5: verbs_device_ops;
-    }
-
-    mod external {
-        extern "C" {
-            pub(super) fn ibv_get_device_list(
-                num_devices: *mut ::std::os::raw::c_int,
-            ) -> *mut *mut super::ibv_device;
-        }
-
-        extern "C" {
-            pub(super) fn ibv_static_providers(unused: *mut ::std::os::raw::c_void, ...);
-        }
-    }
-
+extern "C" {
     /// Get list of IB devices currently available.
     ///
     /// Returns a NULL-terminated array of IB devices.
     /// The array can be released with `ibv_free_device_list()`.
-    pub unsafe fn ibv_get_device_list(
-        num_devices: *mut ::std::os::raw::c_int,
-    ) -> *mut *mut ibv_device {
-        self::external::ibv_static_providers(
-            std::ptr::null_mut(),
-            &mut verbs_provider_mlx5 as *mut verbs_device_ops,
-            0,
-        );
-        self::external::ibv_get_device_list(num_devices)
-    }
+    pub fn ibv_get_device_list(num_devices: *mut ::std::os::raw::c_int) -> *mut *mut ibv_device;
 }
-
-pub use self::__ibv_get_device_list_mod::ibv_get_device_list;
 
 /// Free the list of ibv_device structs provided by [`ibv_get_device_list`].
 ///
@@ -218,31 +168,31 @@ pub use self::private::ibv_destroy_ah;
 /// Address handle.
 pub use self::private::ibv_ah;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 pub use self::private::ibv_exp_create_qp;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 pub use self::private::ibv_exp_modify_qp;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 pub use self::private::ibv_exp_post_send;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 /// Experimental QP attributes.
 pub use self::private::ibv_exp_qp_attr;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 /// Experimental QP initialization attributes.
 pub use self::private::ibv_exp_qp_init_attr;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 /// Experimental send flags.
 pub use self::private::ibv_exp_send_flags;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 /// Experimental send work request.
 pub use self::private::ibv_exp_send_wr;
 
-#[cfg(mlnx4)]
+#[cfg(feature = "legacy")]
 /// Experimental send opcode.
 pub use self::private::ibv_exp_wr_opcode;
