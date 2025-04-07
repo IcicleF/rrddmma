@@ -9,8 +9,8 @@ use thiserror::Error;
 
 use crate::bindings::*;
 #[cfg(feature = "legacy")]
-use crate::rdma::dct::Dct;
-use crate::rdma::{
+use crate::lo::dct::Dct;
+use crate::lo::{
     context::Context,
     cq::Cq,
     mr::*,

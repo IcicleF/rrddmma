@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::{fmt, ptr};
 
 use crate::bindings::*;
-use crate::rdma::{context::Context, cq::Cq, mr::*, pd::Pd, qp::build_sgl};
+use crate::lo::{context::Context, cq::Cq, mr::*, pd::Pd, qp::build_sgl};
 use crate::utils::interop::*;
 
 /// Wrapper for `*mut ibv_srq`.

@@ -1,4 +1,4 @@
-use rrddmma::{ctrl, prelude::*, wrap::RegisteredMem};
+use rrddmma::{ctrl, hi::RegisteredMem, prelude::*};
 use std::{net::Ipv4Addr, thread};
 
 fn make_qp(dev: &str) -> anyhow::Result<Qp> {

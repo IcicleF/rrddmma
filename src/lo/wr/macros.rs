@@ -35,7 +35,7 @@ macro_rules! impl_wr_basic_setters {
             pub fn set_sge(
                 &mut self,
                 index: usize,
-                mr_slice: &$crate::rdma::mr::MrSlice<'a>,
+                mr_slice: &$crate::lo::mr::MrSlice<'a>,
             ) -> &mut Self {
                 self.sgl[index] = ibv_sge {
                     addr: mr_slice.addr() as _,

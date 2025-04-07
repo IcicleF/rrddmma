@@ -5,8 +5,8 @@ use std::{fmt, mem};
 
 use crate::bindings::*;
 #[cfg(feature = "legacy")]
-use crate::rdma::dct::Dct;
-use crate::rdma::{gid::Gid, pd::Pd, qp::Qp, type_alias::*};
+use crate::lo::dct::Dct;
+use crate::lo::{gid::Gid, pd::Pd, qp::Qp, type_alias::*};
 use crate::utils::interop::from_c_ret;
 
 /// Endpoint (NIC port & queue pair / DCT) data.

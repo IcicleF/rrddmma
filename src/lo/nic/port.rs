@@ -4,8 +4,8 @@ use std::{hint, io, mem};
 use thiserror::Error;
 
 use crate::bindings::*;
-use crate::rdma::context::IbvContext;
-use crate::rdma::gid::*;
+use crate::lo::context::IbvContext;
+use crate::lo::gid::*;
 
 /// Physical port information.
 #[derive(Clone)]

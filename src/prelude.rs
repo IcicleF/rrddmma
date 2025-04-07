@@ -3,15 +3,15 @@
 //! The purpose of this module is to alleviate imports of common RDMA
 //! functionalities.
 
-pub use crate::rdma::context::Context;
-pub use crate::rdma::cq::{Cq, Wc, WcOpcode, WcStatus};
+pub use crate::lo::context::Context;
+pub use crate::lo::cq::{Cq, Wc, WcOpcode, WcStatus};
 #[cfg(feature = "legacy")]
-pub use crate::rdma::cq::{ExpCq, ExpWc};
+pub use crate::lo::cq::{ExpCq, ExpWc};
 #[cfg(feature = "legacy")]
-pub use crate::rdma::dct::Dct;
-pub use crate::rdma::mr::{Mr, MrRemote, MrSlice, Slicing};
-pub use crate::rdma::nic::{Nic, Port};
-pub use crate::rdma::pd::Pd;
-pub use crate::rdma::qp::{Qp, QpCaps, QpEndpoint, QpPeer, QpType};
-pub use crate::rdma::srq::Srq;
-pub use crate::rdma::wr::*;
+pub use crate::lo::dct::Dct;
+pub use crate::lo::mr::{Mr, MrRemote, MrSlice, Slicing};
+pub use crate::lo::nic::{Nic, Port};
+pub use crate::lo::pd::Pd;
+pub use crate::lo::qp::{Qp, QpCaps, QpEndpoint, QpPeer, QpType};
+pub use crate::lo::srq::Srq;
+pub use crate::lo::wr::*;

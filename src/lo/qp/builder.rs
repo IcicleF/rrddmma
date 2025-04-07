@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use std::mem;
 
 use crate::bindings::*;
-use crate::rdma::cq::*;
-use crate::rdma::pd::*;
+use crate::lo::cq::*;
+use crate::lo::pd::*;
 
 use super::{Qp, QpCreationError, QpType};
 

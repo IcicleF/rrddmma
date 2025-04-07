@@ -1,16 +1,19 @@
 use std::fs::File;
 use std::io::{self, Read};
-use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::path::Path;
 use std::ptr::NonNull;
 use std::slice;
 
 use crate::bindings::*;
-use crate::rdma::context::IbvContext;
+use crate::lo::context::IbvContext;
 
 /// Wrapper for `*mut ibv_device`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// # Resource Ownership
+///
+/// - Does not own the device descriptor.
+#[derive(Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub(crate) struct IbvDevice(NonNull<ibv_device>);
 
@@ -49,7 +52,7 @@ impl IbvDevice {
     }
 
     /// Open the device to get a context.
-    pub fn open(self) -> io::Result<IbvContext> {
+    pub fn open(&self) -> io::Result<IbvContext> {
         // SAFETY: FFI.
         let ctx = unsafe { ibv_open_device(self.as_ptr()) };
         let ctx = NonNull::new(ctx).ok_or_else(io::Error::last_os_error)?;
@@ -60,13 +63,17 @@ impl IbvDevice {
 impl_ibv_wrapper_traits!(RAW, ibv_device, IbvDevice);
 
 /// Wrapper for `*mut *mut ibv_device`.
+///
+/// # Resource Ownership
+///
+/// - Owns the device list, will free it when dropped.
 #[repr(transparent)]
-pub(super) struct IbvDeviceList(ManuallyDrop<Box<[IbvDevice]>>);
+pub(super) struct IbvDeviceList(&'static [IbvDevice]);
 
 impl IbvDeviceList {
     /// Get a list of RDMA physical devices.
     pub fn new() -> io::Result<Self> {
-        let mut n = 0i32;
+        let mut n = 0;
 
         // SAFETY: FFI.
         let list = unsafe { ibv_get_device_list(&mut n) };
@@ -77,8 +84,8 @@ impl IbvDeviceList {
         // SAFETY:
         // - `IbvDevice` is a transparent wrapper of `*mut ibv_device`.
         // - `ibv_get_device_list` returns a pointer to a valid array of non-null `ibv_device` pointers.
-        let list = unsafe { Box::from_raw(slice::from_raw_parts_mut(list as _, n as usize)) };
-        Ok(Self(ManuallyDrop::new(list)))
+        let list = unsafe { slice::from_raw_parts(list as _, n as usize) };
+        Ok(Self(list))
     }
 }
 

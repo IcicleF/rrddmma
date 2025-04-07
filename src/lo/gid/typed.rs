@@ -8,7 +8,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::bindings::*;
-use crate::rdma::{context::*, type_alias::*};
+use crate::lo::{context::*, type_alias::*};
 
 use super::raw::Gid;
 

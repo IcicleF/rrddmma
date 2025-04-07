@@ -5,7 +5,7 @@ fn main() {
 
 #[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
-    use rrddmma::{prelude::*, wrap::RegisteredMem};
+    use rrddmma::{hi::RegisteredMem, prelude::*};
 
     fn make_qp(dev: &str) -> anyhow::Result<Qp> {
         let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;

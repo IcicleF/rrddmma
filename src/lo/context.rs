@@ -81,7 +81,7 @@ pub struct Context {
 
 impl Context {
     /// Create a context from an opened device and its attributes.
-    #[cfg(not(mlnx4))]
+    #[cfg(not(feature = "legacy"))]
     pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
         Self {
             inner: Arc::new(ContextInner { ctx, attr }),

@@ -1,4 +1,4 @@
-//! RDMA functionalities.
+//! Low-level RDMA functionalities.
 
 pub mod context;
 pub mod cq;

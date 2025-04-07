@@ -3,7 +3,7 @@ use std::mem;
 use std::net::*;
 use std::time::Duration;
 
-use crate::rdma::{mr::*, qp::*};
+use crate::lo::{mr::*, qp::*};
 
 fn stream_write(stream: &mut &TcpStream, buf: &[u8]) -> io::Result<()> {
     stream.write_all(&buf.len().to_le_bytes())?;

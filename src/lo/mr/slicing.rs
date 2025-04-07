@@ -107,4 +107,4 @@ mod private {
 impl private::Sealed for Mr {}
 impl private::Sealed for MrSlice<'_> {}
 impl private::Sealed for MrRemote {}
-impl private::Sealed for crate::wrap::RegisteredMem {}
+impl private::Sealed for crate::hi::RegisteredMem {}

@@ -5,8 +5,8 @@ fn main() {
 
 #[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
-    use rrddmma::rdma::qp::{ExpFeature, ExtCompareSwapParams};
-    use rrddmma::{ctrl, prelude::*, wrap::RegisteredMem};
+    use rrddmma::lo::qp::{ExpFeature, ExtCompareSwapParams};
+    use rrddmma::{ctrl, hi::RegisteredMem, prelude::*};
     use std::{
         net::Ipv4Addr,
         ptr::{self, NonNull},

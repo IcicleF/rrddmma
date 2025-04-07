@@ -5,7 +5,7 @@ fn main() {
 
 #[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
-    use rrddmma::{prelude::*, wrap::RegisteredMem};
+    use rrddmma::{hi::RegisteredMem, prelude::*};
     use std::{thread, time::Duration};
 
     fn client(ep: QpEndpoint) -> anyhow::Result<()> {

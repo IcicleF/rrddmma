@@ -2,7 +2,7 @@ use std::ptr;
 use std::ptr::NonNull;
 
 #[cfg(feature = "legacy")]
-use rrddmma::rdma::qp::ExtCompareSwapParams;
+use rrddmma::lowlevel::qp::ExtCompareSwapParams;
 
 #[cfg(not(feature = "legacy"))]
 fn main() {
@@ -11,14 +11,14 @@ fn main() {
 
 #[cfg(feature = "legacy")]
 fn main() -> anyhow::Result<()> {
-    use rrddmma::{prelude::*, wrap::RegisteredMem};
+    use rrddmma::{hi::RegisteredMem, prelude::*};
     use std::thread;
 
     const LEN: usize = 16;
 
     fn client(ep: QpEndpoint, remote: MrRemote) -> anyhow::Result<()> {
         fn make_dci(dev: &str) -> anyhow::Result<Qp> {
-            use rrddmma::rdma::qp::ExpFeature::*;
+            use rrddmma::lowlevel::qp::ExpFeature::*;
 
             let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;
             let pd = Pd::new(&context)?;

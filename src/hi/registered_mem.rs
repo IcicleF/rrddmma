@@ -2,8 +2,8 @@ use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
-use crate::rdma::mr::*;
-use crate::rdma::pd::*;
+use crate::lo::mr::*;
+use crate::lo::pd::*;
 
 /// A wrapper around an owned memory area that is registered as an RDMA MR.
 /// The memory area is allocated on the heap with `Box<[u8]>` and will be

@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::{io, mem};
 
 use crate::bindings::*;
-use crate::rdma::{mr::*, qp::Qp};
+use crate::lo::{mr::*, qp::Qp};
 use crate::utils::interop::from_c_ret;
 
 include!("macros.rs");
