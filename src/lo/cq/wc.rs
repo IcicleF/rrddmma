@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::bindings::*;
 
 /// Opcode of a completion queue entry.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WcOpcode {
     /// Send request.
     Send = ibv_wc_opcode::IBV_WC_SEND as _,
@@ -25,18 +25,20 @@ pub enum WcOpcode {
     RecvRdmaImm = ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM as _,
 }
 
-impl From<u32> for WcOpcode {
-    fn from(wc_opcode: u32) -> Self {
+impl TryFrom<ibv_wc_opcode::Type> for WcOpcode {
+    type Error = ibv_wc_opcode::Type;
+
+    fn try_from(wc_opcode: u32) -> Result<Self, Self::Error> {
         match wc_opcode {
-            ibv_wc_opcode::IBV_WC_SEND => WcOpcode::Send,
-            ibv_wc_opcode::IBV_WC_RDMA_WRITE => WcOpcode::RdmaWrite,
-            ibv_wc_opcode::IBV_WC_RDMA_READ => WcOpcode::RdmaRead,
-            ibv_wc_opcode::IBV_WC_COMP_SWAP => WcOpcode::CompSwap,
-            ibv_wc_opcode::IBV_WC_FETCH_ADD => WcOpcode::FetchAdd,
-            ibv_wc_opcode::IBV_WC_BIND_MW => WcOpcode::BindMw,
-            ibv_wc_opcode::IBV_WC_RECV => WcOpcode::Recv,
-            ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM => WcOpcode::RecvRdmaImm,
-            _ => panic!("invalid opcode: {}", wc_opcode),
+            ibv_wc_opcode::IBV_WC_SEND => Ok(WcOpcode::Send),
+            ibv_wc_opcode::IBV_WC_RDMA_WRITE => Ok(WcOpcode::RdmaWrite),
+            ibv_wc_opcode::IBV_WC_RDMA_READ => Ok(WcOpcode::RdmaRead),
+            ibv_wc_opcode::IBV_WC_COMP_SWAP => Ok(WcOpcode::CompSwap),
+            ibv_wc_opcode::IBV_WC_FETCH_ADD => Ok(WcOpcode::FetchAdd),
+            ibv_wc_opcode::IBV_WC_BIND_MW => Ok(WcOpcode::BindMw),
+            ibv_wc_opcode::IBV_WC_RECV => Ok(WcOpcode::Recv),
+            ibv_wc_opcode::IBV_WC_RECV_RDMA_WITH_IMM => Ok(WcOpcode::RecvRdmaImm),
+            _ => Err(wc_opcode),
         }
     }
 }
@@ -74,13 +76,6 @@ pub enum WcStatus {
     /// RDMA Write over a UD QP).
     #[error("local QP operation error")]
     LocQpOpErr = ibv_wc_status::IBV_WC_LOC_QP_OP_ERR as _,
-
-    /// **Local EE Context Operation Error:** an internal EE Context
-    /// consistency error was detected while processing this Work Request
-    /// (**unused**, since it is relevant only to RD QPs or EE Context, which
-    /// aren’t supported).
-    #[error("local EE context operation error")]
-    LocEecOpErr = ibv_wc_status::IBV_WC_LOC_EEC_OP_ERR as _,
 
     /// **Local Protection Error:** the locally posted Work Request’s buffers
     /// in the scatter/gather list does not reference a Memory Region that is
@@ -151,34 +146,10 @@ pub enum WcStatus {
     #[error("RNR retry counter exceeded")]
     RnrRetryExcErr = ibv_wc_status::IBV_WC_RNR_RETRY_EXC_ERR as _,
 
-    /// **Local RDD Violation Error:** the RDD associated with the QP does not
-    /// match the RDD associated with the EE Context (**unused**, since it is
-    /// relevant only to RD QPs or EE Context, which aren't supported).
-    #[error("local RDD violation error")]
-    LocRddViolErr = ibv_wc_status::IBV_WC_LOC_RDD_VIOL_ERR as _,
-
-    /// **Remote Invalid RD Request Error:** the responder detected an invalid
-    /// incoming RD message. Causes include a Q_Key or RDD violation (**unused**,
-    /// since it is relevant only to RD QPs or EE Context, which aren't supported).
-    #[error("remote invalid RD request")]
-    RemInvRdReqErr = ibv_wc_status::IBV_WC_REM_INV_RD_REQ_ERR as _,
-
     /// **Remote Aborted Error:** for UD or UC QPs associated with a SRQ, the
     /// responder aborted the operation.
     #[error("remote aborted error")]
     RemAbortErr = ibv_wc_status::IBV_WC_REM_ABORT_ERR as _,
-
-    /// **Invalid EE Context Number:** an invalid EE Context number was detected
-    /// (**unused**, since it is relevant only to RD QPs or EE Context, which
-    /// aren't supported).
-    #[error("invalid EE context number")]
-    InvEecnErr = ibv_wc_status::IBV_WC_INV_EECN_ERR as _,
-
-    /// **Invalid EE Context State Error:** operation is not legal for the
-    /// specified EE Context state (**unused**, since it is relevant only to RD
-    /// QPs or EE Context, which aren't supported).
-    #[error("invalid EE context state error")]
-    InvEecStateErr = ibv_wc_status::IBV_WC_INV_EEC_STATE_ERR as _,
 
     /// **Fatal error:** a fatal error that may not be recoverable.
     #[error("fatal error")]
@@ -274,7 +245,7 @@ impl Wc {
     /// Get the opcode of the work request.
     #[inline]
     pub fn opcode(&self) -> WcOpcode {
-        WcOpcode::from(self.0.opcode)
+        WcOpcode::try_from(self.0.opcode).expect("unsupported opcode")
     }
 
     /// Get the number of bytes processed or transferred.

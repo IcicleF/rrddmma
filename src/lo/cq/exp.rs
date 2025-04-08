@@ -1,4 +1,4 @@
-#![cfg(mlnx4)]
+#![cfg(feature = "exp")]
 
 use super::*;
 use std::{io, mem};
