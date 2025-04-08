@@ -20,7 +20,7 @@ impl IbvPd {
     ///
     /// - A PD must not be deallocated more than once.
     /// - Deallocated PDs must not be used anymore.
-    pub unsafe fn dealloc(self) -> io::Result<()> {
+    pub(crate) unsafe fn dealloc(self) -> io::Result<()> {
         // SAFETY: FFI.
         let ret = ibv_dealloc_pd(self.as_ptr());
         from_c_ret(ret)
@@ -61,11 +61,11 @@ impl Pd {
         let pd = IbvPd::from(pd);
 
         Ok(Self {
+            pd,
             inner: Arc::new(PdInner {
                 ctx: ctx.clone(),
                 pd,
             }),
-            pd,
         })
     }
 

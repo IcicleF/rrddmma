@@ -1,8 +1,8 @@
 use quanta::Instant;
-use rrddmma::{hi::RegisteredMem, prelude::*};
+use rrddmma::{hi::RegisteredMem, lo::prelude::*};
 
 fn make_qp(dev: &str) -> anyhow::Result<Qp> {
-    let Nic { context, ports } = Nic::finder().dev_name(dev).probe()?;
+    let Nic { context, ports } = Nic::open(dev)?;
     let pd = Pd::new(&context)?;
     let cq = Cq::new(&context, Cq::DEFAULT_CQ_DEPTH)?;
     let mut qp = Qp::builder()

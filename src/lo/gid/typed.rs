@@ -15,14 +15,17 @@ use super::raw::Gid;
 /// GID type.
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum GidType {
-    /// RoCEv1.
+    /// RDMA over Converged Ethernet (RoCE) v1.
     RoceV1,
 
-    /// RoCEv2.
+    /// RDMA over Converged Ethernet (RoCE) v2.
     RoceV2,
 
-    /// Infiniband.
-    Infiniband,
+    /// InfiniBand.
+    InfiniBand,
+
+    /// Unrecognized type that is not RoCEv1, RoCEv2 or InfiniBand.
+    Unknown,
 }
 
 impl GidType {
@@ -31,7 +34,7 @@ impl GidType {
     }
 
     pub fn is_infiniband(self) -> bool {
-        matches!(self, GidType::Infiniband)
+        matches!(self, GidType::InfiniBand)
     }
 }
 
@@ -46,10 +49,6 @@ pub enum GidQueryError {
     /// GID itself does not exist in the first place.
     #[error("attribute query error")]
     AttributeQueryError,
-
-    /// The GID type is not Infiniband, RoCEv1, or RoCEv2.
-    #[error("unregonized GID type")]
-    Unrecognized,
 }
 
 /// GID with type.
@@ -84,14 +83,10 @@ impl GidTyped {
 
         let gid = attr.gid;
         let ty = match (is_ethernet, attr.type_) {
-            (false, _) => GidType::Infiniband,
+            (false, _) => GidType::InfiniBand,
             (true, ibv_exp_roce_gid_type::IBV_EXP_IB_ROCE_V1_GID_TYPE) => GidType::RoceV1,
             (true, ibv_exp_roce_gid_type::IBV_EXP_ROCE_V2_GID_TYPE) => GidType::RoceV2,
-
-            // SAFETY: enum constraints of `libibverbs`.
-            _ => {
-                return Err(GidQueryError::Unrecognized);
-            }
+            _ => GidType::Unknown,
         };
         Ok(GidTyped::new(Gid(gid), ty))
     }
@@ -144,8 +139,8 @@ impl GidTyped {
         let ty = match (port_attr.link_layer as i32, gid_is_rocev2) {
             (IBV_LINK_LAYER_ETHERNET, false) => GidType::RoceV1,
             (IBV_LINK_LAYER_ETHERNET, true) => GidType::RoceV2,
-            (_, false) => GidType::Infiniband,
-            _ => return Err(GidQueryError::Unrecognized),
+            (_, false) => GidType::InfiniBand,
+            _ => GidType::Unknown,
         };
         Ok(GidTyped::new(Gid(gid), ty))
     }

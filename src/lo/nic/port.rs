@@ -1,8 +1,6 @@
 use std::fmt::Display;
 use std::{hint, io, mem};
 
-use thiserror::Error;
-
 use crate::bindings::*;
 use crate::lo::context::IbvContext;
 use crate::lo::gid::*;
@@ -23,21 +21,9 @@ pub struct Port {
 unsafe impl Send for Port {}
 unsafe impl Sync for Port {}
 
-/// Port query error type.
-#[derive(Debug, Error)]
-pub enum PortQueryError {
-    /// `libibverbs` interfaces returned an error when querying the port.
-    #[error("ibv_query_port error")]
-    IoError(#[from] io::Error),
-
-    /// Failed to query GID attributes.
-    #[error("GID query error")]
-    GidQueryError(#[from] GidQueryError),
-}
-
 impl Port {
     /// Initialize information of an RDMA device's physical port.
-    pub(crate) fn new(ctx: IbvContext, num: u8) -> Result<Self, PortQueryError> {
+    pub(crate) fn new(ctx: IbvContext, num: u8) -> io::Result<Self> {
         let attr = {
             // SAFETY: POD type.
             let mut attr = unsafe { mem::zeroed() };
@@ -57,7 +43,7 @@ impl Port {
             match GidTyped::query(ctx, num, &attr, i as _) {
                 Ok(gid) => gids.push(gid),
                 Err(GidQueryError::AttributeQueryError) => break,
-                Err(e) => return Err(e.into()),
+                Err(GidQueryError::IoError(e)) => return Err(e),
             }
         }
 

@@ -1,10 +1,7 @@
 //! An RDMA library consisting of safe RDMA wrappings and several useful
 //! functionalities to build RDMA connections.
 //!
-//! This library respects existing installation of MLNX_OFED or ibverbs.
-//! Depending on the environment, it will enable `ibv_exp_*` or RDMA-Core
-//! features correspondingly. You may build the documentation in your
-//! own environment to see which features are enabled.
+//! This library uses existing installation of MLNX_OFED or ibverbs library.
 //!
 //! # Example
 //!
@@ -23,4 +20,3 @@ pub mod bindings;
 pub mod ctrl;
 pub mod hi;
 pub mod lo;
-pub mod prelude;

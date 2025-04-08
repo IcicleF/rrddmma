@@ -16,13 +16,13 @@ pub(crate) struct IbvContext(Option<NonNull<ibv_context>>);
 
 impl IbvContext {
     /// Get the underlying [`IbvDevice`] pointer.
-    pub fn dev(&self) -> IbvDevice {
+    pub(crate) fn dev(&self) -> IbvDevice {
         // SAFETY: the pointed-to `ibv_context` instance is valid.
         unsafe { IbvDevice::from(NonNull::new_unchecked(self.as_ref().device)) }
     }
 
     /// Query device attributes.
-    pub fn query_device(&self) -> io::Result<ibv_device_attr> {
+    pub(crate) fn query_device(&self) -> io::Result<ibv_device_attr> {
         // SAFETY: POD type.
         let mut dev_attr = Default::default();
         // SAFETY: FFI.
@@ -39,7 +39,7 @@ impl IbvContext {
     ///
     /// - A context must not be closed more than once.
     /// - Closed contextes must not be used anymore.
-    pub unsafe fn close(self) -> io::Result<()> {
+    pub(crate) unsafe fn close(self) -> io::Result<()> {
         // SAFETY: FFI.
         match self.0 {
             Some(ctx) => {
@@ -58,7 +58,7 @@ struct ContextInner {
     ctx: IbvContext,
     attr: ibv_device_attr,
 
-    #[cfg(feature = "legacy")]
+    #[cfg(feature = "exp")]
     clock_info: ibv_exp_clock_info,
 }
 
@@ -81,16 +81,7 @@ pub struct Context {
 
 impl Context {
     /// Create a context from an opened device and its attributes.
-    #[cfg(not(feature = "legacy"))]
-    pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
-        Self {
-            inner: Arc::new(ContextInner { ctx, attr }),
-            ctx,
-        }
-    }
-
-    /// Create a context from an opened device and its attributes.
-    #[cfg(feature = "legacy")]
+    #[cfg(feature = "exp")]
     pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
         // SAFETY: FFI.
         let clock_info = unsafe {
@@ -107,21 +98,30 @@ impl Context {
             ctx,
         }
     }
+
+    /// Create a context from an opened device and its attributes.
+    #[cfg(not(feature = "exp"))]
+    pub(crate) fn new(ctx: IbvContext, attr: ibv_device_attr) -> Self {
+        Self {
+            ctx,
+            inner: Arc::new(ContextInner { ctx, attr }),
+        }
+    }
 }
 
 impl Context {
-    /// Get the underlying [`ibv_context`] pointer.
+    /// Get the underlying [`ibv_context`] raw pointer.
     pub fn as_raw(&self) -> *mut ibv_context {
         self.ctx.as_ptr()
     }
 
-    /// Consume and leak the `Context`, returning the underlying [`ibv_context`] pointer.
+    /// Consume and leak the `Context`, returning the underlying [`ibv_context`] raw pointer.
     /// The method receiver must be the only instance of the same context, i.e.,
     ///
-    /// - none of its clones may be alive
-    /// - no [`Pd`](crate::prelude::Pd)s or [`Cq`](crate::prelude::Cq)s created from it may be alive
+    /// - None of its clones may be alive.
+    /// - No [`Pd`](crate::prelude::Pd)s or [`Cq`](crate::prelude::Cq)s created from it may be alive.
     ///
-    /// otherwise, this method fails.
+    /// Otherwise, this method fails.
     pub fn leak(mut self) -> Result<*mut ibv_context, Self> {
         let mut inner = {
             let inner = Arc::try_unwrap(self.inner);
@@ -137,13 +137,13 @@ impl Context {
         Ok(ctx.as_ptr())
     }
 
-    /// Get the device attributes.
+    /// Get the underlying device attributes.
     pub fn attr(&self) -> &ibv_device_attr {
         &self.inner.attr
     }
 
     /// Get the clock information.
-    #[cfg(feature = "legacy")]
+    #[cfg(feature = "exp")]
     pub fn clock_info(&self) -> &ibv_exp_clock_info {
         &self.inner.clock_info
     }

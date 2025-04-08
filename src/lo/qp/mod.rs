@@ -21,6 +21,7 @@ use crate::lo::{
 use crate::utils::interop::*;
 
 pub use self::builder::*;
+#[cfg(feature = "exp")]
 pub use self::params::*;
 pub use self::peer::*;
 pub use self::state::*;

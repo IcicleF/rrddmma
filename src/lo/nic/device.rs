@@ -1,9 +1,6 @@
-use std::fs::File;
-use std::io::{self, Read};
 use std::ops::Deref;
-use std::path::Path;
 use std::ptr::NonNull;
-use std::slice;
+use std::{io, slice};
 
 use crate::bindings::*;
 use crate::lo::context::IbvContext;
@@ -19,7 +16,7 @@ pub(crate) struct IbvDevice(NonNull<ibv_device>);
 
 impl IbvDevice {
     /// Get the name of this device.
-    pub fn name(&self) -> io::Result<String> {
+    pub(crate) fn name(&self) -> io::Result<String> {
         // SAFETY: FFI.
         let name = unsafe { ibv_get_device_name(self.as_ptr()) };
         if name.is_null() {
@@ -34,25 +31,8 @@ impl IbvDevice {
             .to_owned())
     }
 
-    /// Get the NUMA node of this device.
-    pub fn numa_node(&self) -> io::Result<u8> {
-        let name = self.name()?;
-
-        // Read NUMA node information.
-        let path = Path::new("/sys/class/infiniband")
-            .join(name)
-            .join("device/numa_node");
-        let mut buf = String::new();
-        File::open(path)?.read_to_string(&mut buf)?;
-
-        Ok(buf
-            .trim()
-            .parse::<u8>()
-            .expect("invalid NUMA node information in sysfs"))
-    }
-
     /// Open the device to get a context.
-    pub fn open(&self) -> io::Result<IbvContext> {
+    pub(crate) fn open(&self) -> io::Result<IbvContext> {
         // SAFETY: FFI.
         let ctx = unsafe { ibv_open_device(self.as_ptr()) };
         let ctx = NonNull::new(ctx).ok_or_else(io::Error::last_os_error)?;
