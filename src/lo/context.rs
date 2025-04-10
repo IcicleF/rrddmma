@@ -119,7 +119,7 @@ impl Context {
     /// The method receiver must be the only instance of the same context, i.e.,
     ///
     /// - None of its clones may be alive.
-    /// - No [`Pd`](crate::prelude::Pd)s or [`Cq`](crate::prelude::Cq)s created from it may be alive.
+    /// - No [`Pd`](crate::lo::pd::Pd)s or [`Cq`](crate::lo::cq::Cq)s created from it may be alive.
     ///
     /// Otherwise, this method fails.
     pub fn leak(mut self) -> Result<*mut ibv_context, Self> {

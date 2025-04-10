@@ -67,26 +67,6 @@ impl fmt::Debug for Cq {
 }
 
 impl Cq {
-    /// Poll the completion queue for up to `num` work completions.
-    /// Results will be filled in continuous memory starting at `wc`.
-    ///
-    /// # Safety
-    ///
-    /// - `cq` must be a valid pointer to a completion queue.
-    /// - `wc` must be a valid pointer to a memory region of at least `num` elements.
-    /// - `wc` must be aligned to the size of `Wc`.
-    unsafe fn do_poll(&self, wc: *mut Wc, num: usize) -> io::Result<usize> {
-        // SAFETY: FFI, and that `Wc` is transparent over `ibv_wc`.
-        let num = unsafe { ibv_poll_cq(self.as_raw(), num as i32, wc.cast()) };
-        if num >= 0 {
-            Ok(num as usize)
-        } else {
-            Err(io::Error::from_raw_os_error(num))
-        }
-    }
-}
-
-impl Cq {
     /// The default CQ depth.
     pub const DEFAULT_CQ_DEPTH: u32 = 128;
 
@@ -141,11 +121,28 @@ impl Cq {
         (unsafe { (*self.cq.as_ptr()).cqe }) as _
     }
 
-    /// Non-blockingly poll for existing CQ entries. Return the work completions polled.
+    /// Non-blockingly poll the completion queue for up to `num` work completions.
+    /// Results will be filled in contiguous memory starting at `wc`.
+    ///
+    /// # Safety
+    ///
+    /// - `wc` must be a valid pointer to a buffer that can hold at least `num` work completions.
+    pub unsafe fn poll(&self, wc: *mut Wc, num: usize) -> io::Result<usize> {
+        // SAFETY: FFI, and that `Wc` is transparent over `ibv_wc`.
+        let num = unsafe { ibv_poll_cq(self.as_raw(), num as i32, wc.cast()) };
+        if num >= 0 {
+            Ok(num as usize)
+        } else {
+            Err(io::Error::from_raw_os_error(num))
+        }
+    }
+
+    /// Non-blockingly poll for as many as possible existing CQ entries.
+    /// Return the work completions polled.
     ///
     /// It is the caller's responsibility to check the status codes of the
     /// returned work completion entries.
-    pub fn poll(&self) -> io::Result<Vec<Wc>> {
+    pub fn poll_all(&self) -> io::Result<Vec<Wc>> {
         self.poll_some(self.capacity(), false)
     }
 
@@ -178,7 +175,7 @@ impl Cq {
         let mut wc = MaybeUninit::<Wc>::uninit();
         loop {
             // SAFETY: `wc.as_mut_ptr()` is a valid pointer to a buffer of one `Wc` object.
-            let num = unsafe { self.do_poll(wc.as_mut_ptr(), 1) }?;
+            let num = unsafe { self.poll(wc.as_mut_ptr(), 1) }?;
             if !blocking || num != 0 {
                 // SAFETY: `wc` is initialized if `num != 0`.
                 return Ok((num != 0).then(|| unsafe { wc.assume_init() }));
@@ -204,7 +201,7 @@ impl Cq {
 
         loop {
             // SAFETY: `pwc` points to a valid buffer of `num - n` remaining unfilled elements.
-            n += unsafe { self.do_poll(pwc, wc.len() - n) }?;
+            n += unsafe { self.poll(pwc, wc.len() - n) }?;
             pwc = unsafe { wc.as_mut_ptr().add(n) as _ };
 
             if !blocking || n == wc.len() {
@@ -224,7 +221,7 @@ impl Cq {
     pub fn poll_one_into(&self, wc: &mut MaybeUninit<Wc>, blocking: bool) -> io::Result<bool> {
         loop {
             // SAFETY: `wc` points to a valid buffer of one `Wc` object.
-            let num = unsafe { self.do_poll(wc.as_mut_ptr(), 1) }?;
+            let num = unsafe { self.poll(wc.as_mut_ptr(), 1) }?;
             if !blocking || num != 0 {
                 return Ok(num != 0);
             }

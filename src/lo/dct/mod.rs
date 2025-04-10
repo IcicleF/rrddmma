@@ -1,5 +1,5 @@
 //! Dynamically-connected target (DCT).
-#![cfg(mlnx4)]
+#![cfg(feature = "legacy")]
 
 use std::ptr::NonNull;
 use std::sync::Arc;

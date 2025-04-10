@@ -85,7 +85,7 @@ impl Pd {
     /// The method receiver must be the only instance of the same protection domain, i.e.,
     ///
     /// - none of its clones may be alive
-    /// - no [`Mr`](crate::prelude::Mr)s, [`Qp`](crate::prelude::Qp)s, or [`Srq`](crate::prelude::Srq)s created from it may be alive.
+    /// - no [`Mr`](crate::lo::mr::Mr)s, [`Qp`](crate::lo::qp::Qp)s, or [`Srq`](crate::lo::srq::Srq)s created from it may be alive.
     ///
     /// otherwise, this method fails.
     pub fn leak(mut self) -> Result<*mut ibv_pd, Self> {
