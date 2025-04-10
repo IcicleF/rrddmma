@@ -1,4 +1,4 @@
-use std::{fmt, hint, mem};
+use std::{fmt, mem};
 
 use thiserror::Error;
 
@@ -178,29 +178,33 @@ pub enum WcStatus {
     TmRndvIncomplete = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE as _,
 }
 
-#[cfg(feature = "legacy")]
-const WCSTATUS_UPPER_BOUND: u32 = ibv_wc_status::IBV_WC_GENERAL_ERR;
+impl TryFrom<ibv_wc_status::Type> for WcStatus {
+    type Error = ibv_wc_status::Type;
 
-#[cfg(not(feature = "legacy"))]
-const WCSTATUS_UPPER_BOUND: u32 = ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE;
-
-impl WcStatus {
-    /// Cast `ibv_wc_status` into `WcStatus`.
-    #[inline]
-    pub(crate) unsafe fn from_unsafe(wc_status: ibv_wc_status::Type) -> Self {
+    fn try_from(wc_status: ibv_wc_status::Type) -> Result<Self, Self::Error> {
         match wc_status {
-            x if x <= WCSTATUS_UPPER_BOUND => mem::transmute(x),
-            _ => hint::unreachable_unchecked(),
-        }
-    }
-}
-
-impl From<u32> for WcStatus {
-    fn from(wc_status: u32) -> Self {
-        match wc_status {
-            // SAFETY: Valid status codes in `ibv_wc_status` are contiguous.
-            x if x <= WCSTATUS_UPPER_BOUND => unsafe { mem::transmute(x) },
-            x => panic!("invalid wc status: {}", x),
+            ibv_wc_status::IBV_WC_SUCCESS => Ok(WcStatus::Success),
+            ibv_wc_status::IBV_WC_LOC_LEN_ERR => Ok(WcStatus::LocLenErr),
+            ibv_wc_status::IBV_WC_LOC_QP_OP_ERR => Ok(WcStatus::LocQpOpErr),
+            ibv_wc_status::IBV_WC_LOC_PROT_ERR => Ok(WcStatus::LocProtErr),
+            ibv_wc_status::IBV_WC_WR_FLUSH_ERR => Ok(WcStatus::WrFlushErr),
+            ibv_wc_status::IBV_WC_MW_BIND_ERR => Ok(WcStatus::MwBindErr),
+            ibv_wc_status::IBV_WC_BAD_RESP_ERR => Ok(WcStatus::BadRespErr),
+            ibv_wc_status::IBV_WC_LOC_ACCESS_ERR => Ok(WcStatus::LocAccessErr),
+            ibv_wc_status::IBV_WC_REM_INV_REQ_ERR => Ok(WcStatus::RemInvReqErr),
+            ibv_wc_status::IBV_WC_REM_ACCESS_ERR => Ok(WcStatus::RemAccessErr),
+            ibv_wc_status::IBV_WC_REM_OP_ERR => Ok(WcStatus::RemOpErr),
+            ibv_wc_status::IBV_WC_RETRY_EXC_ERR => Ok(WcStatus::RetryExcErr),
+            ibv_wc_status::IBV_WC_RNR_RETRY_EXC_ERR => Ok(WcStatus::RnrRetryExcErr),
+            ibv_wc_status::IBV_WC_REM_ABORT_ERR => Ok(WcStatus::RemAbortErr),
+            ibv_wc_status::IBV_WC_FATAL_ERR => Ok(WcStatus::FatalErr),
+            ibv_wc_status::IBV_WC_RESP_TIMEOUT_ERR => Ok(WcStatus::RespTimeoutErr),
+            ibv_wc_status::IBV_WC_GENERAL_ERR => Ok(WcStatus::GeneralErr),
+            #[cfg(not(feature = "legacy"))]
+            ibv_wc_status::IBV_WC_TM_ERR => Ok(WcStatus::TmErr),
+            #[cfg(not(feature = "legacy"))]
+            ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE => Ok(WcStatus::TmRndvIncomplete),
+            _ => Err(wc_status),
         }
     }
 }
@@ -226,8 +230,10 @@ impl Wc {
     /// Get the completion status.
     #[inline]
     pub fn status(&self) -> WcStatus {
-        // SAFETY: SAFETY: enum constraints of `libibverbs`.
-        unsafe { WcStatus::from_unsafe(self.0.status) }
+        match WcStatus::try_from(self.0.status) {
+            Ok(status) => status,
+            Err(_) => panic!("unsupported status: {}", self.0.status),
+        }
     }
 
     /// Get the completion status as a `Result`.
@@ -245,7 +251,10 @@ impl Wc {
     /// Get the opcode of the work request.
     #[inline]
     pub fn opcode(&self) -> WcOpcode {
-        WcOpcode::try_from(self.0.opcode).expect("unsupported opcode")
+        match WcOpcode::try_from(self.0.opcode) {
+            Ok(opcode) => opcode,
+            Err(_) => panic!("unsupported opcode: {}", self.0.opcode),
+        }
     }
 
     /// Get the number of bytes processed or transferred.
@@ -255,19 +264,21 @@ impl Wc {
     }
 
     /// Get the immediate data.
+    /// If the work completion doesn't carry an immediate, return `None`.
     #[inline]
     pub fn imm(&self) -> Option<u32> {
-        if (self.0.wc_flags & ibv_wc_flags::IBV_WC_WITH_IMM.0) != 0 {
-            Some(self.0.imm())
-        } else {
-            None
-        }
+        ((self.0.wc_flags & ibv_wc_flags::IBV_WC_WITH_IMM.0) != 0).then(|| self.0.imm())
     }
 
     /// Get the immediate data, without checking whether the work completion
     /// really carries an immediate.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the work completion actually carries an immediate.
+    /// Otherwise, the function might read garbage or uninitialized data.
     #[inline]
-    pub fn imm_unchecked(&self) -> u32 {
+    pub unsafe fn imm_unchecked(&self) -> u32 {
         self.0.imm()
     }
 }

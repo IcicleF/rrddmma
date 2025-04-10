@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
             true,
         )?;
     }
-    qp.scq().poll_one_blocking_consumed();
+    qp.scq().poll_one_blockingly_consumed();
 
     println!("Time elapsed (RDMA): {:?}", time.elapsed());
     assert_eq!(

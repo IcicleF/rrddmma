@@ -23,7 +23,7 @@ fn client() -> anyhow::Result<()> {
     // Send the message to the server.
     let mem = RegisteredMem::new_with_content(qp.pd(), "Hello, rrddmma!".as_bytes())?;
     qp.send(&[mem.as_slice()], None, None, 0, true, true)?;
-    qp.scq().poll_one_blocking()?;
+    qp.scq().poll_one(true)?;
     Ok(())
 }
 
@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
     // Receive a message from the client.
     let mem = RegisteredMem::new(qp.pd(), 4096)?;
     qp.recv(&[mem.as_slice()], 0)?;
-    let wc = qp.rcq().poll_one_blocking()?;
+    let wc = qp.rcq().poll_one(true)?.unwrap();
     println!("{}", String::from_utf8_lossy(&mem[..wc.ok()?]));
 
     cli.join().unwrap()?;
