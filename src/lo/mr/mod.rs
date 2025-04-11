@@ -121,7 +121,7 @@ impl Mr {
         })
     }
 
-    /// Get the underlying [`ibv_mr`] pointer.
+    /// Get the underlying `ibv_mr` raw pointer.
     #[inline]
     pub fn as_raw(&self) -> *mut ibv_mr {
         self.mr.as_ptr()

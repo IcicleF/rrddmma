@@ -145,7 +145,7 @@ impl Dct {
         Default::default()
     }
 
-    /// Get the underlying `ibv_exp_dct` pointer.
+    /// Get the underlying `ibv_exp_dct` raw pointer.
     #[inline]
     pub fn as_raw(&self) -> *mut ibv_exp_dct {
         self.dct.as_ptr()

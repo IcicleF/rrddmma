@@ -110,7 +110,7 @@ impl Context {
 }
 
 impl Context {
-    /// Get the underlying [`ibv_context`] raw pointer.
+    /// Get the underlying `ibv_context` raw pointer.
     pub fn as_raw(&self) -> *mut ibv_context {
         self.ctx.as_ptr()
     }

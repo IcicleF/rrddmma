@@ -105,12 +105,12 @@ impl Cq {
         })
     }
 
-    /// Get the underlying [`ibv_cq`] pointer.
+    /// Get the underlying `ibv_cq` raw pointer.
     pub fn as_raw(&self) -> *mut ibv_cq {
         self.cq.as_ptr()
     }
 
-    /// Get the underlying [`Context`].
+    /// Get the [`Context`] of the completion queue.
     pub fn context(&self) -> &Context {
         &self.inner.ctx
     }

@@ -525,7 +525,7 @@ impl Qp {
         Default::default()
     }
 
-    /// Get the underlying `ibv_qp` pointer.
+    /// Get the underlying `ibv_qp` raw pointer.
     pub fn as_raw(&self) -> *mut ibv_qp {
         self.qp.as_ptr()
     }

@@ -69,7 +69,7 @@ impl Pd {
         })
     }
 
-    /// Get the underlying `ibv_pd` structure.
+    /// Get the underlying `ibv_pd` raw pointer.
     #[inline]
     pub fn as_raw(&self) -> *mut ibv_pd {
         self.pd.as_ptr()

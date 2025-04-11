@@ -100,7 +100,7 @@ impl Srq {
         Ok(srq)
     }
 
-    /// Get the underlying `ibv_srq` pointer.
+    /// Get the underlying `ibv_srq` raw pointer.
     #[inline]
     pub fn as_raw(&self) -> *mut ibv_srq {
         self.srq.as_ptr()
