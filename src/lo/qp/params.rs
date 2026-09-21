@@ -1,5 +1,4 @@
 //! Complex parameter types used in RDMA send operations.
-#![cfg(feature = "exp")]
 
 use std::ptr::NonNull;
 

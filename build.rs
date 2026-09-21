@@ -105,7 +105,13 @@ fn link_ibverbs_rdmacore() -> Result<Bindings> {
             .iter()
             .map(|p| p.to_str().unwrap().to_owned())
             .collect(),
-        linkages: lib.libs.iter().map(|s| s.to_owned()).collect(),
+        // `libmlx5` provides the `mlx5dv_*` vendor extensions (raw WQE, etc.).
+        linkages: lib
+            .libs
+            .iter()
+            .map(|s| s.to_owned())
+            .chain(["mlx5".to_owned()])
+            .collect(),
     })
 }
 
@@ -157,7 +163,12 @@ fn gen_verb_bindings(bindings: Bindings) {
         .clang_args(include_args)
         .header("src/bindings/verbs.h")
         .allowlist_function("ibv_.*")
+        .allowlist_function("mlx5dv_.*")
         .allowlist_type("ibv_.*")
+        .allowlist_type("mlx5dv_.*")
+        .allowlist_type("MLX5_.*")
+        .allowlist_var("MLX5_.*")
+        .allowlist_var("mlx5dv_.*")
         .allowlist_type("verbs_.*")
         .allowlist_type("ib_uverbs_access_flags")
         .blocklist_type("pthread_.*")
