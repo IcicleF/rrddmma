@@ -11,50 +11,74 @@ It is highly specialized to Mellanox/NVIDIA ConnectX network adapter series.
 
 **WARNING: the interfaces are unstable and under continuous change!**
 
+> **Note (fork `mlnx5-ext-atomic`):** this branch ports the two features that
+> previously required legacy MLNX_OFED v4.9 (`ibv_exp_*`) — **extended masked
+> atomics** and **Dynamically Connected transport** — onto the stock
+> **rdma-core / `mlx5dv_*`** path. They now work out of the box with distro
+> rdma-core packages and modern MLNX_OFED v5.x / DOCA-OFED installs, with no
+> experimental-verbs setup required. Both features are hardware-verified on
+> ConnectX-7 (RoCE), including ext atomics posted over a DCI.
+
 ## Linkage
 
-This library supports multiple linkage types to the `ibverbs` library.
+This library links to `libibverbs` in one of two ways, selected by Cargo
+features.
 
-1. First, this library respects
-   existing [MLNX_OFED](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/) installations.
-   It works on both v4.9-x and v5.x versions.
+1. **rdma-core (default).** If `libibverbs` >= 1.8.28 is discoverable through
+   `pkg-config`, `rrddmma` links against it and additionally links the `mlx5`
+   userspace provider (`libmlx5`), which exposes the `mlx5dv_*` vendor
+   extensions. This covers plain distribution rdma-core packages as well as
+   MLNX_OFED v5.x and DOCA-OFED installs that register with `pkg-config`.
 
-   - MLNX_OFED v4.9-x will enable experimental, see [below](#undocumented-features).
-   - ~~MLNX*OFED v5.x will enable `mlx5dv*\*` features.~~ (TODO)
-
-2. Otherwise, `rrddmma` will try to find an existing `libibverbs` installation via `pkg-config`.
-
-   - ~~This will enable enable `mlx5dv_*` features.~~ (TODO)
-
-3. Otherwise, `rrddmma` will try to download [rdma-core](https://github.com/linux-rdma/rdma-core) and build from source.
-   You need to ensure that the dependencies are properly installed.
-   In Ubuntu and other Debian-derived OSs, these are:
+   On Debian/Ubuntu:
 
    ```shell
-   sudo apt install -y build-essential cmake gcc libclang-dev libudev-dev libsystemd-dev \
-                       libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind \
-                       python3-dev cython3 python3-docutils pandoc
+   sudo apt install libibverbs-dev libmlx5-1
    ```
 
-   Building from source is different from the previous two approaches in that `libibverbs` is linked statically and
-   cannot detect providers at runtime.
-   This library currently only allows the `mlx5` provider.
+   On this path, extended atomics are posted as MLX5 raw WQEs
+   (`mlx5dv_wr_raw_wqe`) and DC objects are created with `mlx5dv_create_qp`;
+   no experimental QP flags are needed (see [below](#platform-specific-features)).
 
-   - ~~This will enable enable `mlx5dv_*` features.~~ (TODO)
+2. **Legacy MLNX_OFED v4.9-x.** Enable the `legacy` feature (or `exp`, which
+   implies `legacy` and also binds the `ibv_exp_*` experimental verbs). The
+   v4.9 installation is located via `ofed_info`; set `MLNX_OFED_LIB_DIR` /
+   `MLNX_OFED_INCLUDE_DIR` to override the default search paths.
 
-## Undocumented Features
+   ```toml
+   rrddmma = { version = "0.7.3", features = ["exp"] }
+   ```
 
-Due to the distinct feature set of MLNX_OFED v4.x and v5.x drivers, enabled features of this library is also different
-on different machines. As a result, some features are undocumented in [docs.rs](https://docs.rs/rrddmma). Here are some
-of them:>
+## Platform-specific Features
 
-- **Dynamically Connected QPs:** available on MLNX_OFED v4.x. A `Dct` type will be available, and you may create QPs
-  of type `QpType::DcIni` to send messages to `Dct`s.
-- **Extended Atomics:** available on MLNX_OFED v4.x. `Qp::ext_compare_swap()` and `Qp::ext_fetch_add()` will be
-  available. To use this feature, call `enable_feature(ExpFeature::ExtendedAtomics, N)` when you build a QP, in which
-  `N` can be 8, 16, or 32.
+The available feature set differs between the rdma-core and the legacy v4.x
+stack, so some items are not documented on [docs.rs](https://docs.rs/rrddmma).
 
-To get a complete set of features, you can build the documentation locally:
+- **Extended (masked) atomics:** `Qp::ext_compare_swap::<N>()` and
+  `Qp::ext_fetch_add::<N>()`, with independent per-dword compare / swap / add
+  masks (`ExtCompareSwapParams`). `N` is the operand width in bytes.
+  - **rdma-core (default):** the WQE is built directly and posted through
+    `mlx5dv_wr_raw_wqe`; the QP must simply be an mlx5 QP (every QP created by
+    this library on the rdma-core path is). 8- and 16-byte operations are
+    hardware-verified, including on DC initiator QPs. Nothing has to be
+    enabled at QP creation time.
+  - **MLNX_OFED v4.x (`exp`):** call
+    `enable_feature(ExpFeature::ExtendedAtomics, N)` when building the QP,
+    where `N` can be 8, 16, or 32.
+- **Dynamically Connected QPs:** a `Dct` target type, together with initiator
+  QPs of type `QpType::DcIni` that send to `Dct`s.
+  - **rdma-core (default):** DCTs are created with `mlx5dv_create_qp` and DC
+    sends install their address vector with `mlx5dv_wr_set_dc_addr`.
+  - **MLNX_OFED v4.x (`exp`):** DCTs are created with `ibv_exp_create_dct`.
+
+Runnable examples live in [`examples/`](examples):
+
+- `extcas.rs` / `extfaa.rs` — masked compare-swap / fetch-add over RC;
+  `loopback_extcas.rs` is a self-contained local loopback.
+- `dc.rs`, `dc_local.rs` — DCT/DCI basics; `loopback_dc.rs` additionally
+  fires ext atomics over a DCI loopback.
+
+To get the complete set of feature-gated documentation, build it locally:
 
 ```shell
 cargo doc --open
