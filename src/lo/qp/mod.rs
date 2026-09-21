@@ -8,7 +8,6 @@ use std::{fmt, mem, ptr};
 use thiserror::Error;
 
 use crate::bindings::*;
-#[cfg(feature = "legacy")]
 use crate::lo::dct::Dct;
 use crate::lo::{
     context::Context,
@@ -187,6 +186,20 @@ impl Qp {
             let mut mlx5_attr: mlx5dv_qp_init_attr = unsafe { mem::zeroed() };
             mlx5_attr.comp_mask = MLX5DV_QP_INIT_ATTR_MASK_SEND_OPS_FLAGS as u64;
             mlx5_attr.send_ops_flags = MLX5DV_QP_EX_WITH_RAW_WQE as u64;
+
+            // DC initiator QPs additionally request the standard extended
+            // send ops (send / RDMA write), so that traffic to DCT targets
+            // can be posted via the `ibv_qp_ex` interface with a DC address
+            // segment, and carry the DCI type flag.
+            if init_attr.qp_type == QpType::Driver {
+                attr.send_ops_flags = (ibv_qp_create_send_ops_flags::IBV_QP_EX_WITH_SEND
+                    | ibv_qp_create_send_ops_flags::IBV_QP_EX_WITH_SEND_WITH_IMM
+                    | ibv_qp_create_send_ops_flags::IBV_QP_EX_WITH_RDMA_WRITE)
+                    .0 as u64;
+                mlx5_attr.comp_mask |= MLX5DV_QP_INIT_ATTR_MASK_DC as u64;
+                mlx5_attr.dc_init_attr.dc_type = MLX5DV_DCTYPE_DCI;
+            }
+
             // SAFETY: FFI.
             unsafe { mlx5dv_create_qp(pd.context().as_raw(), &mut attr, &mut mlx5_attr) }
         }
@@ -384,6 +397,80 @@ impl Qp {
         from_c_ret(ret)
     }
 
+    /// Modify a DC initiator QP from RESET to RTS (rdma-core variant).
+    ///
+    /// DCI QPs are driver QPs on this path and go through the standard
+    /// `ibv_modify_qp` state machine. Routing is decided per-WQE by the DC
+    /// address vector, so the RTR AV only needs to be locally valid.
+    ///
+    /// # Panics
+    ///
+    /// Panic if the QP type is not `Driver` (the rdma-core DCI type).
+    #[cfg(not(feature = "legacy"))]
+    fn modify_dcini_reset2rts(&self) -> io::Result<()> {
+        assert_eq!(self.qp_type(), QpType::Driver);
+        let (port, _gid_idx) = self.local_port.as_ref().unwrap();
+
+        // RESET -> INIT.
+        {
+            // SAFETY: POD type.
+            let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
+            attr.qp_state = ibv_qp_state::IBV_QPS_INIT;
+            attr.pkey_index = 0;
+            attr.port_num = port.num();
+
+            let attr_mask = ibv_qp_attr_mask::IBV_QP_STATE
+                | ibv_qp_attr_mask::IBV_QP_PKEY_INDEX
+                | ibv_qp_attr_mask::IBV_QP_PORT;
+            // SAFETY: FFI.
+            let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
+            from_c_ret(ret)?;
+        }
+
+        // INIT -> RTR.
+        {
+            // SAFETY: POD type.
+            let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
+            attr.qp_state = ibv_qp_state::IBV_QPS_RTR;
+            attr.path_mtu = port.mtu() as _;
+
+            // Mirror the legacy DCI settings with local (LID-based) routing.
+            attr.ah_attr.dlid = port.lid();
+            attr.ah_attr.sl = 0;
+            attr.ah_attr.src_path_bits = 0;
+            attr.ah_attr.port_num = port.num();
+
+            let attr_mask = ibv_qp_attr_mask::IBV_QP_STATE
+                | ibv_qp_attr_mask::IBV_QP_PATH_MTU
+                | ibv_qp_attr_mask::IBV_QP_AV;
+            // SAFETY: FFI.
+            let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
+            from_c_ret(ret)?;
+        }
+
+        // RTR -> RTS.
+        {
+            // SAFETY: POD type.
+            let mut attr = unsafe { mem::zeroed::<ibv_qp_attr>() };
+            attr.qp_state = ibv_qp_state::IBV_QPS_RTS;
+            attr.sq_psn = Self::GLOBAL_INIT_PSN;
+            attr.max_rd_atomic = 16;
+            attr.timeout = 14;
+            attr.retry_cnt = 6;
+            attr.rnr_retry = 6;
+
+            let attr_mask = ibv_qp_attr_mask::IBV_QP_STATE
+                | ibv_qp_attr_mask::IBV_QP_SQ_PSN
+                | ibv_qp_attr_mask::IBV_QP_MAX_QP_RD_ATOMIC
+                | ibv_qp_attr_mask::IBV_QP_TIMEOUT
+                | ibv_qp_attr_mask::IBV_QP_RETRY_CNT
+                | ibv_qp_attr_mask::IBV_QP_RNR_RETRY;
+            // SAFETY: FFI.
+            let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
+            from_c_ret(ret)
+        }
+    }
+
     /// Explain [`ibv_post_recv`] errors.
     fn recv_err_explanation(ret: i32) -> Option<&'static str> {
         match ret {
@@ -488,6 +575,28 @@ impl Qp {
             send_flags |= ibv_send_flags::IBV_SEND_INLINE.0;
         }
 
+        // DC initiator: post via the extended interface with a DC address
+        // segment. Routing goes to the DCT peer's endpoint.
+        if self.qp_type() == QpType::Driver {
+            let peer = peer.or(self.peer.as_ref()).ok_or_else(|| {
+                IoError::new(
+                    IoErrorKind::InvalidInput,
+                    "no peer specified for UD or DCI QP",
+                )
+            })?;
+            self.dc_post_impl(peer, wr_id, signal, |qpx| unsafe {
+                // NOTE: the op segment must be emitted before the SGE list
+                // (libmlx5 allocates the WQE in the op setter), and the DC
+                // address must come after the op (see `dc_post_impl`).
+                match imm {
+                    Some(v) => ((*qpx).wr_send_imm.unwrap())(qpx, v),
+                    None => ((*qpx).wr_send.unwrap())(qpx),
+                }
+                ((*qpx).wr_set_sge_list.unwrap())(qpx, sgl.len(), sgl.as_ptr());
+            })?;
+            return Ok(());
+        }
+
         let mut wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
@@ -514,6 +623,49 @@ impl Qp {
             unsafe { ibv_post_send(self.as_raw(), &mut wr, &mut bad_wr) }
         };
         from_c_ret_explained(ret, Self::send_err_explanation)
+    }
+
+    /// Post a send-type work request to the given DCT peer via the extended
+    /// interface (`ibv_qp_ex` + `mlx5dv_wr_set_dc_addr`).
+    ///
+    /// The `emit` closure is invoked right after `wr_start`, and must emit
+    /// the operation (e.g. `wr_send`) — which allocates the WQE in libmlx5 —
+    /// before its SGE list. The DC address segment is written afterwards,
+    /// which also finalizes the WQE (the last of the two required setters).
+    #[cfg(not(feature = "legacy"))]
+    fn dc_post_impl<F>(&self, peer: &QpPeer, wr_id: WrId, signal: bool, emit: F) -> io::Result<()>
+    where
+        F: FnOnce(*mut ibv_qp_ex),
+    {
+        let ep = peer.endpoint();
+        // SAFETY: FFI. The QP is created with the DCI extended send ops and
+        // `peer` provides a valid AH / DCT number pair.
+        unsafe {
+            let qpx = ibv_qp_to_qp_ex(self.as_raw());
+            if qpx.is_null() {
+                return Err(IoError::new(
+                    IoErrorKind::Unsupported,
+                    "QP does not support the extended API",
+                ));
+            }
+            (*qpx).wr_id = wr_id;
+            (*qpx).wr_flags = if signal {
+                ibv_send_flags::IBV_SEND_SIGNALED.0
+            } else {
+                0
+            };
+            ((*qpx).wr_start.unwrap())(qpx);
+            emit(qpx);
+            let mqpx = mlx5dv_qp_ex_from_ibv_qp_ex(qpx);
+            ((*mqpx).wr_set_dc_addr.unwrap())(
+                mqpx,
+                peer.ah_raw(),
+                ep.num,
+                Dct::GLOBAL_DC_KEY,
+            );
+            let ret = ((*qpx).wr_complete.unwrap())(qpx);
+            from_c_ret_explained(ret, Self::send_err_explanation)
+        }
     }
 }
 
@@ -649,6 +801,9 @@ impl Qp {
 
             #[cfg(feature = "legacy")]
             QpType::DcIni => self.modify_dcini_reset2rts()?,
+
+            #[cfg(not(feature = "legacy"))]
+            QpType::Driver => self.modify_dcini_reset2rts()?,
 
             _ => {}
         }
@@ -867,7 +1022,7 @@ impl Qp {
     ///
     /// | QP Type | RC | UC | UD | DC |
     /// |---------|----|----|----|----|
-    /// | OK?     | Y  | Y  | N  | N  |
+    /// | OK?     | Y  | Y  | N  | Y  |
     pub fn write(
         &self,
         local: &[MrSlice],
@@ -876,9 +1031,40 @@ impl Qp {
         imm: Option<ImmData>,
         signal: bool,
     ) -> io::Result<()> {
+        #[cfg(feature = "legacy")]
         assert!(matches!(self.qp_type(), QpType::Rc | QpType::Uc));
+        #[cfg(not(feature = "legacy"))]
+        assert!(matches!(
+            self.qp_type(),
+            QpType::Rc | QpType::Uc | QpType::Driver
+        ));
 
         let mut sgl = build_sgl(local);
+
+        // DC initiator: post via the extended interface with a DC address
+        // segment.
+        #[cfg(not(feature = "legacy"))]
+        if self.qp_type() == QpType::Driver {
+            let peer = self.peer.as_ref().ok_or_else(|| {
+                IoError::new(
+                    IoErrorKind::InvalidInput,
+                    "no peer specified for DCI QP",
+                )
+            })?;
+            self.dc_post_impl(peer, wr_id, signal, |qpx| unsafe {
+                // NOTE: op segment first (allocates the WQE), then the SGE
+                // list; the DC address is written by `dc_post_impl`.
+                match imm {
+                    Some(v) => {
+                        ((*qpx).wr_rdma_write_imm.unwrap())(qpx, remote.rkey, remote.addr, v)
+                    }
+                    None => ((*qpx).wr_rdma_write.unwrap())(qpx, remote.rkey, remote.addr),
+                }
+                ((*qpx).wr_set_sge_list.unwrap())(qpx, sgl.len(), sgl.as_ptr());
+            })?;
+            return Ok(());
+        }
+
         let mut wr = ibv_send_wr {
             wr_id,
             next: ptr::null_mut(),
@@ -1038,7 +1224,7 @@ impl Qp {
     ///
     /// | QP Type | RC | UC | UD | DC |
     /// |---------|----|----|----|----|
-    /// | OK?     | Y  | N  | N  | N  |
+    /// | OK?     | Y  | N  | N  | Y  |
     pub unsafe fn ext_compare_swap<const N: usize>(
         &self,
         local: MrSlice,
@@ -1050,13 +1236,18 @@ impl Qp {
         check_ext_atomic_mem::<N>(local, remote)?;
 
         // MLX5 raw WQE for masked CAS:
-        //   ctrl(16B) + raddr(16B) + masked-atomic(4N) + data(16B)
-        // opmod = log2(N/4), DS = 3 + N/4.
+        //   RC:  ctrl(16B) + raddr(16B) + masked-atomic(4N) + data(16B)
+        //   DCI: ctrl(16B) + AV(16/48B) + raddr(16B) + masked-atomic(4N) + data(16B)
+        // opmod = log2(N/4), DS = 3 + N/4 + av_len/16.
         // (buffer is sized for the max N=32 case and sliced to the actual length)
-        let mut wqe = [0u8; 48 + 4 * 32];
-        let wqe = &mut wqe[..48 + 4 * N];
+        #[cfg(not(feature = "legacy"))]
+        let (av_seg, av_len) = self.dc_av_seg()?;
+        #[cfg(feature = "legacy")]
+        let (av_seg, av_len): (Option<[u8; 48]>, usize) = (None, 0);
+
+        let mut wqe = [0u8; 16 + 48 + 16 + 4 * 32 + 16];
         let opmod = (N.ilog2() - 2) as u32;
-        let ds = (3 + N / 4) as u32;
+        let ds = (3 + N / 4 + av_len / 16) as u32;
         let qpn = unsafe { (*self.as_raw()).qp_num };
 
         // ctrl segment.
@@ -1065,26 +1256,33 @@ impl Qp {
         wqe[4..8].copy_from_slice(&((qpn << 8) | ds).to_be_bytes());
         wqe[11] = if signal { MLX5_WQE_CTRL_CQ_UPDATE as u8 } else { 0 };
 
+        // DC address-vector segment (DCI QPs only).
+        if let Some(av) = av_seg {
+            wqe[16..16 + av_len].copy_from_slice(&av[..av_len]);
+        }
+
         // raddr segment.
-        wqe[16..24].copy_from_slice(&remote.addr.to_be_bytes());
-        wqe[24..28].copy_from_slice(&remote.rkey.to_be_bytes());
+        let mut off = 16 + av_len;
+        wqe[off..off + 8].copy_from_slice(&remote.addr.to_be_bytes());
+        wqe[off + 8..off + 12].copy_from_slice(&remote.rkey.to_be_bytes());
 
         // masked-atomic segment: swap_add | compare | swap_add_mask | compare_mask,
         // each N bytes, big-endian per 8-byte slot.
+        off += 16;
         unsafe {
-            write_be_u64_slots(&mut wqe[32..32 + N], params.swap.as_ptr(), N);
-            write_be_u64_slots(&mut wqe[32 + N..32 + 2 * N], params.compare.as_ptr(), N);
-            write_be_u64_slots(&mut wqe[32 + 2 * N..32 + 3 * N], params.swap_mask.as_ptr(), N);
-            write_be_u64_slots(&mut wqe[32 + 3 * N..32 + 4 * N], params.compare_mask.as_ptr(), N);
+            write_be_u64_slots(&mut wqe[off..off + N], params.swap.as_ptr(), N);
+            write_be_u64_slots(&mut wqe[off + N..off + 2 * N], params.compare.as_ptr(), N);
+            write_be_u64_slots(&mut wqe[off + 2 * N..off + 3 * N], params.swap_mask.as_ptr(), N);
+            write_be_u64_slots(&mut wqe[off + 3 * N..off + 4 * N], params.compare_mask.as_ptr(), N);
         }
 
         // data segment: the old value is returned to this local buffer.
-        let off = 32 + 4 * N;
+        off += 4 * N;
         wqe[off..off + 4].copy_from_slice(&(N as u32).to_be_bytes());
         wqe[off + 4..off + 8].copy_from_slice(&local.lkey().to_be_bytes());
         wqe[off + 8..off + 16].copy_from_slice(&(local.addr() as u64).to_be_bytes());
 
-        self.post_raw_wqe(&wqe, wr_id)
+        self.post_raw_wqe(&wqe[..off + 16], wr_id)
     }
 
     /// Post an RDMA extended atomic fetch-and-add (FAA) request.
@@ -1121,7 +1319,7 @@ impl Qp {
     ///
     /// | QP Type | RC | UC | UD | DC |
     /// |---------|----|----|----|----|
-    /// | OK?     | Y  | N  | N  | N  |
+    /// | OK?     | Y  | N  | N  | Y  |
     pub unsafe fn ext_fetch_add<const N: usize>(
         &self,
         local: MrSlice,
@@ -1134,7 +1332,8 @@ impl Qp {
         check_ext_atomic_mem::<N>(local, remote)?;
 
         // MLX5 raw WQE for masked FAA:
-        //   ctrl(16B) + raddr(16B) + atomic(2N) + data(16B)
+        //   RC:  ctrl(16B) + raddr(16B) + atomic(2N) + data(16B)
+        //   DCI: ctrl(16B) + AV(16/48B) + raddr(16B) + atomic(2N) + data(16B)
         // NOTE: unlike masked CAS, the masked-FAA segment only contains two
         // N-byte octwords — `fa_add` followed by `fa_mask` — and the per-bit
         // mask semantics differ from CS: each mask bit selects whether the
@@ -1142,12 +1341,16 @@ impl Qp {
         // via XOR (mask = 1), i.e. each slot is updated as
         //   new = (old + (add & !mask)) ^ (add & mask).
         // Verified on ConnectX-7 (MT41692, FW 32.43.1014): opmod = log2(N/4),
-        // DS = 3 + N/8.
+        // DS = 3 + N/8 + av_len/16.
         // (buffer is sized for the max N=32 case and sliced to the actual length)
-        let mut wqe = [0u8; 48 + 2 * 32];
-        let wqe = &mut wqe[..48 + 2 * N];
+        #[cfg(not(feature = "legacy"))]
+        let (av_seg, av_len) = self.dc_av_seg()?;
+        #[cfg(feature = "legacy")]
+        let (av_seg, av_len): (Option<[u8; 48]>, usize) = (None, 0);
+
+        let mut wqe = [0u8; 16 + 48 + 16 + 2 * 32 + 16];
         let opmod = (N.ilog2() - 2) as u32;
-        let ds = (3 + N / 8) as u32;
+        let ds = (3 + N / 8 + av_len / 16) as u32;
         let qpn = unsafe { (*self.as_raw()).qp_num };
 
         // ctrl segment.
@@ -1156,37 +1359,89 @@ impl Qp {
         wqe[4..8].copy_from_slice(&((qpn << 8) | ds).to_be_bytes());
         wqe[11] = if signal { MLX5_WQE_CTRL_CQ_UPDATE as u8 } else { 0 };
 
+        // DC address-vector segment (DCI QPs only).
+        if let Some(av) = av_seg {
+            wqe[16..16 + av_len].copy_from_slice(&av[..av_len]);
+        }
+
         // raddr segment.
-        wqe[16..24].copy_from_slice(&remote.addr.to_be_bytes());
-        wqe[24..28].copy_from_slice(&remote.rkey.to_be_bytes());
+        let mut off = 16 + av_len;
+        wqe[off..off + 8].copy_from_slice(&remote.addr.to_be_bytes());
+        wqe[off + 8..off + 12].copy_from_slice(&remote.rkey.to_be_bytes());
 
         // atomic segment: fa_add (addend) | fa_mask (per-bit ADD/XOR selector),
         // each N bytes, big-endian per 8-byte slot.
+        off += 16;
         unsafe {
-            write_be_u64_slots(&mut wqe[32..32 + N], add.as_ptr(), N);
-            write_be_u64_slots(&mut wqe[32 + N..32 + 2 * N], mask.as_ptr(), N);
+            write_be_u64_slots(&mut wqe[off..off + N], add.as_ptr(), N);
+            write_be_u64_slots(&mut wqe[off + N..off + 2 * N], mask.as_ptr(), N);
         }
 
         // data segment: the old value is returned to this local buffer.
-        let off = 32 + 2 * N;
+        off += 2 * N;
         wqe[off..off + 4].copy_from_slice(&(N as u32).to_be_bytes());
         wqe[off + 4..off + 8].copy_from_slice(&local.lkey().to_be_bytes());
         wqe[off + 8..off + 16].copy_from_slice(&(local.addr() as u64).to_be_bytes());
 
-        self.post_raw_wqe(&wqe, wr_id)
+        self.post_raw_wqe(&wqe[..off + 16], wr_id)
+    }
+
+    /// Build the MLX5 DC address-vector (AV) segment that routes raw WQEs of
+    /// this QP to its DC peer (set via [`Self::set_dc_peer`]).
+    ///
+    /// Returns the AV bytes and their length: 16B for local (LID-based)
+    /// routing, or 48B when global (GRH) routing is required. Non-DC QPs get
+    /// `(None, 0)` and no AV segment is included in the WQE.
+    ///
+    /// The provider's internal AV encoding (obtained via `mlx5dv_init_obj`
+    /// from the peer's address handle) is copied verbatim, then the DC key
+    /// and the remote DCT number are patched in.
+    #[cfg(not(feature = "legacy"))]
+    fn dc_av_seg(&self) -> io::Result<(Option<[u8; 48]>, usize)> {
+        if self.qp_type() != QpType::Driver {
+            return Ok((None, 0));
+        }
+        let peer = self.peer.as_ref().ok_or_else(|| {
+            IoError::new(
+                IoErrorKind::InvalidInput,
+                "no peer specified for DCI QP",
+            )
+        })?;
+        let ep = peer.endpoint();
+
+        // SAFETY: POD type.
+        let mut dv_ah: mlx5dv_ah = unsafe { mem::zeroed() };
+        // SAFETY: POD type.
+        let mut obj: mlx5dv_obj = unsafe { mem::zeroed() };
+        obj.ah.in_ = peer.ah_raw();
+        obj.ah.out = &mut dv_ah;
+        // SAFETY: FFI.
+        let ret = unsafe { mlx5dv_init_obj(&mut obj, MLX5DV_OBJ_AH as u64) };
+        from_c_ret(ret)?;
+
+        let av_len = if ep.is_global() { 48 } else { 16 };
+        let mut av = [0u8; 48];
+        // SAFETY: `dv_ah.av` points to the provider's valid `mlx5_wqe_av`.
+        unsafe { ptr::copy_nonoverlapping(dv_ah.av as *const u8, av.as_mut_ptr(), av_len) };
+
+        // Patch in the DC key and the remote DCT number: the extended-AV
+        // flag sits at bit 31 of `dqp_dct`, the DCT number in the low 24
+        // bits. Both fields are big-endian in the WQE.
+        av[0..8].copy_from_slice(&Dct::GLOBAL_DC_KEY.to_be_bytes());
+        let ext = (av_len == 48) as u32;
+        av[8..12].copy_from_slice(&((ext << 31) | (ep.num & 0x00FF_FFFF)).to_be_bytes());
+        Ok((Some(av), av_len))
     }
 
     /// Post a pre-built MLX5 WQE via `mlx5dv_wr_raw_wqe`.
     fn post_raw_wqe(&self, wqe: &[u8], wr_id: WrId) -> io::Result<()> {
-        // DCI QPs map to `DcIni` (legacy) or `Driver` (rdma-core).
+        // Legacy DCI QPs (`DcIni`) cannot post raw WQEs — the exp interface
+        // has no `mlx5dv_wr_raw_wqe` equivalent.
         #[cfg(feature = "legacy")]
-        let is_dc = self.qp_type() == QpType::DcIni;
-        #[cfg(not(feature = "legacy"))]
-        let is_dc = self.qp_type() == QpType::Driver;
-        if is_dc {
+        if self.qp_type() == QpType::DcIni {
             return Err(IoError::new(
                 IoErrorKind::Unsupported,
-                "ext atomics over DC QPs are not supported via raw WQE yet",
+                "ext atomics over DC QPs are not supported on the legacy path",
             ));
         }
         // SAFETY: FFI. The QP is created with `MLX5DV_QP_EX_WITH_RAW_WQE`.
