@@ -19,6 +19,13 @@ use crate::lo::{
 };
 use crate::utils::interop::*;
 
+/// One-shot override of the RNR retry counter applied to the next RC QP
+/// transition to RTS on this thread (see [`Qp::rnr_retry_override`]).
+std::thread_local! {
+    static RNR_RETRY_OVERRIDE: std::cell::Cell<Option<u8>> =
+        const { std::cell::Cell::new(None) };
+}
+
 pub use self::builder::*;
 pub use self::params::*;
 pub use self::peer::*;
@@ -315,7 +322,9 @@ impl Qp {
             attr.max_rd_atomic = 16;
             attr.timeout = 14;
             attr.retry_cnt = 6;
-            attr.rnr_retry = 6;
+            attr.rnr_retry = RNR_RETRY_OVERRIDE
+                .with(|c| c.take())
+                .unwrap_or(6);
             attr_mask |= ibv_qp_attr_mask::IBV_QP_MAX_QP_RD_ATOMIC
                 | ibv_qp_attr_mask::IBV_QP_TIMEOUT
                 | ibv_qp_attr_mask::IBV_QP_RETRY_CNT
@@ -325,6 +334,15 @@ impl Qp {
         // SAFETY: FFI.
         let ret = unsafe { ibv_modify_qp(self.as_raw(), &mut attr, attr_mask.0 as i32) };
         from_c_ret(ret)
+    }
+
+    /// Arrange for the next RC QP transition to RTS on the calling thread
+    /// to use the given RNR retry counter; the override is consumed once.
+    /// Pass 7 to retry indefinitely, so fire-and-forget sends survive a
+    /// transiently drained peer receive queue instead of surfacing an RNR
+    /// error after the default six retry rounds.
+    pub fn rnr_retry_override(n: u8) {
+        RNR_RETRY_OVERRIDE.with(|c| c.set(Some(n)));
     }
 
     /// Modify a DC initiator QP from RESET to RTS.
