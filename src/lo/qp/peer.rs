@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::{fmt, mem};
 
 use crate::bindings::*;
-#[cfg(feature = "legacy")]
 use crate::lo::dct::Dct;
 use crate::lo::{gid::Gid, pd::Pd, qp::Qp, type_alias::*};
 use crate::utils::interop::from_c_ret;
@@ -49,7 +48,6 @@ impl QpEndpoint {
     }
 
     /// Create an endpoint representing a DCT.
-    #[cfg(feature = "legacy")]
     pub fn of_dct(dct: &Dct) -> Self {
         let init_attr = dct.init_attr();
         let gid = init_attr.port.gids()[init_attr.gid_index as usize];
@@ -202,6 +200,14 @@ impl QpPeer {
             dct_number: self.num,
             dct_access_key: Dct::GLOBAL_DC_KEY,
         }
+    }
+
+    /// Get the raw `ibv_ah` pointer of this peer, as used by the rdma-core
+    /// DC send path (`mlx5dv_wr_set_dc_addr` and raw-WQE AV extraction).
+    #[cfg(not(feature = "legacy"))]
+    #[inline]
+    pub(crate) fn ah_raw(&self) -> *mut ibv_ah {
+        self.ah.as_ptr()
     }
 }
 

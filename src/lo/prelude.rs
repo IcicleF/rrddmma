@@ -14,5 +14,4 @@ pub use crate::lo::wr::*;
 
 #[cfg(feature = "exp")]
 pub use crate::lo::cq::{ExpCq, ExpWc};
-#[cfg(feature = "legacy")]
 pub use crate::lo::dct::Dct;

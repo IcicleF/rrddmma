@@ -1,8 +1,11 @@
-use std::{io, mem};
+use std::io;
+#[cfg(feature = "legacy")]
+use std::mem;
 
-use crate::bindings::*;
-use crate::prelude::QpCaps;
-use crate::rdma::{context::Context, cq::Cq, mr::Permission, nic::*, pd::Pd, srq::Srq};
+use crate::lo::prelude::QpCaps;
+use crate::lo::{context::Context, cq::Cq, nic::*, pd::Pd, srq::Srq};
+#[cfg(feature = "legacy")]
+use crate::lo::mr::Permission;
 
 use super::{Dct, DctCreationError};
 
@@ -57,6 +60,9 @@ impl<'a> DctBuilder<'a> {
 
     /// Set the maximum message size (in bytes) that can be inline received
     /// by this DCT.
+    ///
+    /// NOTE: this setting only takes effect on the legacy MLNX_OFED path;
+    /// the rdma-core creation interface provides no equivalent knob.
     pub fn inline_size(mut self, len: u32) -> Self {
         self.inline_size = len;
         self
@@ -112,11 +118,13 @@ pub(crate) struct DctInitAttr {
     pub gid_index: u8,
 
     /// The maximum message size (in bytes) that can be inline received by the DCT.
+    #[cfg_attr(not(feature = "legacy"), allow(dead_code))]
     pub inline_size: u32,
 }
 
 impl DctInitAttr {
     /// Create an [`ibv_exp_dct_init_attr`] from the attributes.
+    #[cfg(feature = "legacy")]
     pub fn to_init_attr(&self) -> ibv_exp_dct_init_attr {
         ibv_exp_dct_init_attr {
             pd: self.pd.as_raw(),
