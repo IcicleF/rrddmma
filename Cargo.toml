@@ -1,9 +1,9 @@
 [package]
 name = "rrddmma"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2021"
 
-authors = ["Jian Gao <i@icyf.me>"]
+authors = ["Jian Gao <i@icyf.me>", "Michael-powerfs"]
 description = "A Rust library for RDMA."
 repository = "https://github.com/IcicleF/rrddmma"
 license = "MIT"
